@@ -43,6 +43,7 @@ pub struct AgentRoute {
     pub agent: String,
     pub prefix: String,
     pub enabled: bool,
+    pub onboarding_completed: bool,
 }
 pub fn default_routes() -> Vec<AgentRoute> {
     vec![
@@ -81,7 +82,7 @@ impl Default for Settings {
             language: "zh-CN".into(), mail: MailSettings::default(), router: RouterSettings::default(),
             allowlist: Vec::new(), agent_routes: default_routes(), projects: Vec::new(), codex_command: "codex".into(),
             workspace_write: false, poll_seconds: 30, progress_minutes: vec![10, 30, 60],
-            enabled: false,
+            enabled: false, onboarding_completed: false,
         }
     }
 }
@@ -89,7 +90,14 @@ impl Settings {
     pub fn read(dir: &Path) -> Result<Self> {
         let path = dir.join("config.json");
         if !path.exists() { return Ok(Self::default()); }
-        let settings: Self = serde_json::from_slice(&fs::read(path)?)?;
+        let bytes = fs::read(path)?;
+        let mut settings: Self = serde_json::from_slice(&bytes)?;
+        // Existing configured users should not be forced through new onboarding.
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if json.get("onboarding_completed").is_none()
+            && !settings.mail.address.trim().is_empty() && !settings.allowlist.is_empty() {
+            settings.onboarding_completed = true;
+        }
         Ok(settings)
     }
     pub fn validate(&self) -> Result<()> {
