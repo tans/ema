@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">EMA</title>
+  <desc id="desc">Geometric email envelope formed from electric blue and neon green strokes</desc>
+  <g fill="none" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke="#1265FF" d="M25 35V98H66M25 35L63 66"/>
+    <path stroke="#25E84F" d="M63 66L103 32V98H66"/>
+  </g>
+</svg>
