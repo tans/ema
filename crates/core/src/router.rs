@@ -4,7 +4,7 @@ pub struct Decision { pub agent: String, pub project: String, pub task: String }
 
 /// Only a leading plain-text Agent prefix followed by whitespace can create a task.
 pub fn route(config: &Settings, subject: &str, body: &str) -> Option<Decision> {
-    let subject = subject.trim_start();
+    let subject = subject;
     let (prefix, title) = subject.split_once(char::is_whitespace)?;
     if title.trim().is_empty() { return None; }
     let matched = config.agent_routes.iter().find(|r| r.prefix.eq_ignore_ascii_case(prefix) && r.enabled)?;
