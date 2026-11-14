@@ -57,7 +57,8 @@ pub fn receive(c:&MailSettings,pass:&str)->Result<Vec<Incoming>> {
     uids.sort_unstable();
     let mut result=Vec::new();
     for uid in uids.into_iter().take(30) {
-        for msg in session.uid_fetch(uid.to_string(),"BODY.PEEK[]")?.iter() {
+        let fetched = session.uid_fetch(uid.to_string(),"BODY.PEEK[]")?;
+        for msg in fetched.iter() {
             if let Some(raw)=msg.body() {
                 match parse(uid,raw) {
                     Ok(v)=>result.push(v),
@@ -88,7 +89,12 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
         .in_reply_to(o.in_reply_to.clone())
         .references(o.references.clone())
         .body(o.body.clone())?;
-    let transport=SmtpTransport::relay(&c.smtp_host)?.port(c.smtp_port)
+    let builder = if c.smtp_port == 587 {
+        SmtpTransport::starttls_relay(&c.smtp_host)?
+    } else {
+        SmtpTransport::relay(&c.smtp_host)?
+    };
+    let transport=builder.port(c.smtp_port)
         .credentials(Credentials::new(c.username.clone(),pass.into())).build();
     transport.send(&msg)?;
     Ok(())

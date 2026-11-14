@@ -68,7 +68,7 @@ export default function App(){
     <header className="top">
       <div className="brand"><div className="logo"><Mail size={20}/></div>
         <div><h1>Email Agent</h1><p>Local Super Agent Gateway</p></div></div>
-      <span className={"status "+(settings.enabled?"on":"off")}><i/>{settings.enabled?"Running":"Paused"}</span>
+      <span className={"status "+(settings.enabled?"on":"off")}><i/>{settings.enabled?"Enabled":"Disabled"}</span>
     </header>
     <section className="mail-section">
       <div className="small-label">EMAIL ACCOUNT</div>
@@ -123,7 +123,7 @@ export default function App(){
         <button className="outline" onClick={()=>setEditing(null)}>Close</button></div>
     </section>}
     <section className="summary">
-      <div className="summary-top"><strong>Gateway activity</strong><span><i className={settings.enabled?"green-dot":"gray-dot"}/>{settings.enabled?"Active":"Stopped"}</span></div>
+      <div className="summary-top"><strong>Gateway activity</strong><span><i className={settings.enabled?"green-dot":"gray-dot"}/>{settings.enabled?"Enabled":"Disabled"}</span></div>
       <div className="metrics">
         <div><b>{stats?.running_jobs??0}</b><span>Running</span></div>
         <div><b>{stats?.pending_jobs??0}</b><span>Queued</span></div>

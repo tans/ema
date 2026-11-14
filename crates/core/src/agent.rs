@@ -16,6 +16,7 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     for key in ["EMA_MAIL_PASSWORD", "EMA_ROUTER_API_KEY", "EMA_MAIL_ACCESS_CODE"] { cmd.env_remove(key); }
     cmd.arg("-").current_dir(&cwd).stdin(Stdio::piped())
         .stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
     let mut child = cmd.spawn().context("failed to start Codex CLI")?;
     let mut stdin = child.stdin.take().context("missing child stdin")?;
     stdin.write_all(job.prompt.as_bytes()).await?;
