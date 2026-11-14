@@ -57,13 +57,18 @@ pub fn check_connection(c: &MailSettings, pass: &str) -> Result<()> {
     session.logout()?;
     Ok(())
 }
-pub fn receive(c:&MailSettings,pass:&str)->Result<Vec<Incoming>> {
+pub fn receive(c:&MailSettings,pass:&str,last_uid:u32,known_validity:u32)->Result<(Vec<Incoming>,u32,u32)> {
     let mut session=login(c,pass)?;
-    session.select("INBOX")?;
-    let mut uids:Vec<u32>=session.uid_search("UNSEEN")?.into_iter().collect();
+    let mailbox = session.select("INBOX")?;
+    let validity = mailbox.uid_validity.unwrap_or(0);
+    let cursor = if known_validity != validity { 0 } else { last_uid };
+    let query = format!("UID {}:*", cursor.saturating_add(1));
+    let mut uids:Vec<u32>=session.uid_search(query)?.into_iter().filter(|uid| *uid > cursor).collect();
     uids.sort_unstable();
     let mut result=Vec::new();
+    let mut watermark=cursor;
     for uid in uids.into_iter().take(30) {
+        watermark=uid;
         let fetched = session.uid_fetch(uid.to_string(),"BODY.PEEK[]")?;
         for msg in fetched.iter() {
             if let Some(raw)=msg.body() {
@@ -71,14 +76,14 @@ pub fn receive(c:&MailSettings,pass:&str)->Result<Vec<Incoming>> {
                     Ok(v)=>result.push(v),
                     Err(err)=>{
                         tracing::warn!(uid,"ignored malformed email: {err}");
-                        session.uid_store(uid.to_string(),"+FLAGS (\\Seen)")?;
+                        // Do not alter read/unread state for malformed or ordinary email.
                     }
                 }
             }
         }
     }
     let _=session.logout();
-    Ok(result)
+    Ok((result,watermark,validity))
 }
 pub fn acknowledge(c:&MailSettings,pass:&str,uids:&[u32])->Result<()> {
     if uids.is_empty(){return Ok(());}
