@@ -1,70 +1,128 @@
 name: Desktop Release
 
+# Tag pushes are the standard release route. The workflow's first merge to main
+# bootstraps the v0.1.0 alpha once, without requiring any paid credentials.
 on:
   push:
     tags:
       - "v[0-9]*"
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-ema
   cancel-in-progress: false
 
 jobs:
   validate:
-    name: Validate version and release source
+    name: Validate release source and versions
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }
+      should_release: ${{ steps.gate.outputs.should_release }
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Ensure tag belongs to main
+      - name: Confirm commit belongs to main
         run: |
           git fetch origin main
           git merge-base --is-ancestor HEAD origin/main || {
-            echo "::error::Release tags must point to commits already on main"
+            echo "::error::Only main commits may be released"
             exit 1
           }
-      - name: Verify free macOS ad-hoc signing configuration
-        run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          config = json.loads(Path("src-tauri/tauri.conf.json").read_text())
-          assert config["bundle"]["macOS"]["signingIdentity"] == "-"
-          print("Free ad-hoc macOS signing configured; no Apple notarization.")
-          PY
-      - name: Check version consistency
+      - name: Check manifest versions and release ref
+        id: version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REF_TYPE: ${{ github.ref_type }
+          GH_REF_NAME: ${{ github.ref_name }
         run: |
           python3 - <<'PY'
           import json
           import os
           import tomllib
           from pathlib import Path
-
-          package_version = json.loads(Path("package.json").read_text())["version"]
-          tauri_version = json.loads(Path("src-tauri/tauri.conf.json").read_text())["version"]
+          package = json.loads(Path("package.json").read_text())["version"]
+          tauri = json.loads(Path("src-tauri/tauri.conf.json").read_text())
           with Path("src-tauri/Cargo.toml").open("rb") as f:
-              desktop_version = tomllib.load(f)["package"]["version"]
+              desktop = tomllib.load(f)["package"]["version"]
           with Path("crates/core/Cargo.toml").open("rb") as f:
-              core_version = tomllib.load(f)["package"]["version"]
-          assert len({package_version, tauri_version, desktop_version, core_version}) == 1, (
-              "package.json, Tauri config, and Cargo package versions must match"
-          )
-          expected = "v" + package_version
-          assert os.environ["RELEASE_TAG"] == expected, (
-              f"Tag must be {expected}; found {os.environ['RELEASE_TAG']}"
-          )
-          print(f"Validated {expected}")
+              core = tomllib.load(f)["package"]["version"]
+          assert len({package, tauri["version"], desktop, core}) == 1, "Version manifests differ"
+          assert tauri["bundle"]["macOS"]["signingIdentity"] == "-", "Free macOS ad-hoc signing missing"
+          tag = "v" + package
+          if os.environ["GH_REF_TYPE"] == "tag":
+              assert os.environ["GH_REF_NAME"] == tag, "Tag and manifest version differ"
+          else:
+              assert os.environ["GH_REF_NAME"] == "main", "Manual/bootstrap releases must use main"
+              assert tag == "v0.1.0" or os.environ.get("GH_REF_TYPE") == "branch", "Unexpected ref"
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
+              f.write(f"tag={tag}\n")
+          print("Valid release", tag)
           PY
+      - name: Skip if this version is already public
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }
+          RELEASE_TAG: ${{ steps.version.outputs.tag }
+        run: |
+          STATE="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "$STATE" == "false" ]]; then
+            echo "Version $RELEASE_TAG is already public; not rebuilding"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  initialize:
+    name: Create draft pre-release
+    needs: validate
+    if: needs.validate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create unpublished alpha release (and tag if missing)
+        env:
+          GH_TOKEN: ${{ github.token }
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Existing draft release will receive build assets"
+          else
+            cat > /tmp/release-notes.md <<'NOTES'
+          # EMA v0.1.0 — Alpha preview
+
+          **No New App. Just Email.** A local-first Rust/Tauri email gateway for Codex.
+
+          **Experimental and not production-safe:** Real mailbox/Codex integration,
+          sender-authentication safeguards, approval flows and platform installation
+          have not yet been fully verified. Use only a controlled test mailbox and
+          a non-sensitive project directory; keep workspace-write disabled.
+
+          - macOS: ad-hoc signed, **NOT** Apple Developer ID signed or notarized.
+            A one-time allow decision may be needed in System Settings > Privacy & Security.
+          - Windows: no Authenticode publisher signature; SmartScreen may warn.
+          - Linux: packages are unsigned.
+          - Automatic updates are not enabled.
+
+          See [Chinese installation guide](https://github.com/tans/ema/blob/main/docs/INSTALL.zh-CN.md)
+          and [release documentation](https://github.com/tans/ema/blob/main/docs/RELEASING.md).
+          Verify downloads against the included SHA256SUMS before use.
+          NOTES
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA"               --draft --prerelease --title "EMA $RELEASE_TAG (Alpha)"               --notes-file /tmp/release-notes.md
+          fi
 
   bundle:
-    name: Bundle ${{ matrix.name }}
-    needs: validate
+    name: Build ${{ matrix.name }
+    needs: [validate, initialize]
+    if: needs.validate.outputs.should_release == 'true'
     permissions:
       contents: write
     strategy:
@@ -74,20 +132,20 @@ jobs:
           - name: macOS ARM64
             platform: macos-15
             target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
+            args: "--target aarch64-apple-darwin --bundles dmg"
           - name: macOS Intel
             platform: macos-15-intel
             target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
+            args: "--target x86_64-apple-darwin --bundles dmg"
           - name: Linux x64
             platform: ubuntu-22.04
             target: ""
-            args: ""
+            args: "--bundles deb,appimage"
           - name: Windows x64
             platform: windows-latest
             target: ""
-            args: ""
-    runs-on: ${{ matrix.platform }}
+            args: "--bundles nsis,msi"
+    runs-on: ${{ matrix.platform }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -95,7 +153,7 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }
       - name: Install Linux desktop dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -103,57 +161,47 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config libssl-dev
       - name: Install frontend dependencies
         run: npm install
-      - name: Build and attach desktop installers to draft release
+      - name: Build and upload installers to draft release
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "EMA ${{ github.ref_name }}"
-          releaseBody: |
-            Experimental EMA (Email-Native Agent Gateway) alpha preview.
-
-            macOS bundles are ad-hoc signed, NOT Apple Developer ID signed or notarized.
-            macOS may ask users to allow EMA in System Settings > Privacy & Security.
-            Windows installers have no publisher certificate and may show SmartScreen warnings.
-            Linux installers are unsigned; Tauri automatic updates are not enabled.
-            See docs/INSTALL.zh-CN.md and docs/RELEASING.md and verify SHA256SUMS.
-            Live IMAP/SMTP + Codex integration and security acceptance remain incomplete.
-            Do not use with sensitive projects or untrusted senders.
+          tagName: ${{ needs.validate.outputs.tag }
+          releaseName: "EMA ${{ needs.validate.outputs.tag } (Alpha)"
           releaseDraft: true
           prerelease: true
-          args: ${{ matrix.args }}
-
-      - name: Verify macOS app signature inside DMG
+          args: ${{ matrix.args }
+      - name: Verify macOS app ad-hoc signature inside DMG
         if: startsWith(matrix.platform, 'macos-')
         shell: bash
         run: |
           set -euo pipefail
           DMG_PATH="$(find target -type f -name '*.dmg' -path '*/bundle/dmg/*' -print -quit)"
-          test -n "$DMG_PATH" || { echo "::error::No built DMG found"; exit 1; }
+          test -n "$DMG_PATH" || { echo "::error::No DMG generated"; exit 1; }
           MOUNT="$RUNNER_TEMP/ema-dmg-verify"
           mkdir -p "$MOUNT"
           hdiutil attach -quiet -readonly -nobrowse -mountpoint "$MOUNT" "$DMG_PATH"
           trap 'hdiutil detach -quiet "$MOUNT" || true' EXIT
           APP_PATH="$MOUNT/EMA.app"
-          test -d "$APP_PATH" || { echo "::error::EMA.app absent from DMG"; exit 1; }
+          test -d "$APP_PATH" || { echo "::error::No EMA.app in DMG"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
           grep -q 'Signature=adhoc' /tmp/ema-codesign.log
 
   checksums:
-    name: Attach SHA256 checksums
-    needs: bundle
+    name: Attach checksum manifest
+    needs: [validate, bundle]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Calculate checksums for release downloads
+      - name: Verify all installers and publish SHA256SUMS
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }
+          GH_REPO: ${{ github.repository }
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }
         run: |
+          set -euo pipefail
           mkdir -p bundles
           gh release download "$RELEASE_TAG" --dir bundles
           (
@@ -162,3 +210,21 @@ jobs:
             test -s SHA256SUMS
           )
           gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --clobber
+
+  publish:
+    name: Publish public Alpha pre-release
+    needs: [validate, checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish only after all platform builds pass
+        env:
+          GH_TOKEN: ${{ github.token }
+          GH_REPO: ${{ github.repository }
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets             --jq '{url, isDraft, isPrerelease, files: [.assets[].name]}'
