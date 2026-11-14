@@ -10,6 +10,7 @@ pub struct Session {
     pub owner: String,
     pub agent: String,
     pub project: String,
+    pub cwd: Option<String>,
     pub agent_session: Option<String>,
     pub subject: String,
     pub root_mid: String,
@@ -72,6 +73,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state);
             CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(state, next_attempt);
         "#)?;
+        let columns = c.prepare("PRAGMA table_info(sessions)")?.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        if !columns.iter().any(|name| name == "cwd") { c.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", [])?; }
+        c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);")?;
         // Never replay an interrupted agent run without human intervention.
         c.execute("UPDATE jobs SET state='interrupted', completed_at=strftime('%s','now') WHERE state='running'", [])?;
         Ok(Self(Mutex::new(c)))
@@ -82,13 +86,13 @@ impl Database {
     fn map_session(r: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
         Ok(Session { id:r.get(0)?, owner:r.get(1)?, agent:r.get(2)?,
             project:r.get(3)?,agent_session:r.get(4)?,subject:r.get(5)?,
-            root_mid:r.get(6)?,last_mid:r.get(7)? })
+            root_mid:r.get(6)?,last_mid:r.get(7)?,cwd:r.get(8)? })
     }
     pub fn find_by_references(&self, refs: &[String]) -> Result<Option<Session>> {
         let c = self.lock()?;
         for mid in refs {
             let result = c.query_row(
-                "SELECT s.id,s.owner,s.agent,s.project,s.agent_session,s.subject,s.root_mid,s.last_mid
+                "SELECT s.id,s.owner,s.agent,s.project,s.agent_session,s.subject,s.root_mid,s.last_mid,s.cwd
                 FROM messages m JOIN sessions s ON m.session_id=s.id WHERE m.message_id=?1",
                 [mid], Self::map_session).optional()?;
             if result.is_some() { return Ok(result); }
@@ -97,27 +101,46 @@ impl Database {
     }
     pub fn session(&self, id: &str) -> Result<Session> {
         self.lock()?.query_row(
-            "SELECT id,owner,agent,project,agent_session,subject,root_mid,last_mid FROM sessions WHERE id=?1",
+            "SELECT id,owner,agent,project,agent_session,subject,root_mid,last_mid,cwd FROM sessions WHERE id=?1",
             [id], Self::map_session).with_context(|| format!("session not found: {id}"))
     }
     pub fn store_inbound(&self, mid: &str, owner: &str, existing: Option<&Session>,
-        agent: &str, project: &str, subject: &str, prompt: &str) -> Result<Option<String>> {
+        agent: &str, project: &str, subject: &str, prompt: &str, cwd: Option<&str>, enqueue: bool) -> Result<Option<String>> {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session_id = existing.map(|s| s.id.clone()).unwrap_or_else(|| Uuid::new_v4().to_string());
         if existing.is_none() {
-            tx.execute("INSERT INTO sessions(id,owner,agent,project,subject,root_mid,last_mid,created_at)
-                VALUES(?1,?2,?3,?4,?5,?6,?6,strftime('%s','now'))",
-                params![session_id, owner,agent,project,subject,mid])?;
+            tx.execute("INSERT INTO sessions(id,owner,agent,project,subject,root_mid,last_mid,created_at,cwd)
+                VALUES(?1,?2,?3,?4,?5,?6,?6,strftime('%s','now'),?7)",
+                params![session_id, owner,agent,project,subject,mid,cwd])?;
         }
         let added = tx.execute("INSERT OR IGNORE INTO messages(message_id,session_id,direction,created_at)
             VALUES (?1,?2,'in',strftime('%s','now'))", params![mid,session_id])?;
         if added == 0 { tx.rollback()?; return Ok(None); }
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
-        tx.execute("INSERT INTO jobs(id,session_id,prompt,state) VALUES(?1,?2,?3,'queued')",
-            params![Uuid::new_v4().to_string(),session_id,prompt])?;
+        if enqueue {
+            tx.execute("INSERT INTO jobs(id,session_id,prompt,state) VALUES(?1,?2,?3,'queued')",
+                params![Uuid::new_v4().to_string(),session_id,prompt])?;
+        }
         tx.commit()?;
         Ok(Some(session_id))
+    }
+    pub fn update_cwd(&self, session_id: &str, cwd: &str) -> Result<()> {
+        self.lock()?.execute("UPDATE sessions SET cwd=?1 WHERE id=?2 AND cwd IS NULL", params![cwd,session_id])?;
+        Ok(())
+    }
+    pub fn known_workspaces(&self) -> Result<Vec<String>> {
+        let c=self.lock()?;
+        let mut st=c.prepare("SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL")?;
+        let rows=st.query_map([],|r|r.get::<_,String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+    pub fn cursor(&self, mailbox: &str) -> Result<(u32,u32)> {
+        Ok(self.lock()?.query_row("SELECT last_uid,uid_validity FROM mail_cursors WHERE mailbox=?1", [mailbox], |r|Ok((r.get(0)?,r.get(1)?))).optional()?.unwrap_or((0,0)))
+    }
+    pub fn set_cursor(&self, mailbox:&str, uid:u32, validity:u32) -> Result<()> {
+        self.lock()?.execute("INSERT INTO mail_cursors(mailbox,last_uid,uid_validity) VALUES(?1,?2,?3) ON CONFLICT(mailbox) DO UPDATE SET last_uid=excluded.last_uid,uid_validity=excluded.uid_validity",params![mailbox,uid,validity])?;
+        Ok(())
     }
     pub fn claim(&self) -> Result<Option<Job>> {
         let mut c = self.lock()?;
@@ -150,7 +173,7 @@ impl Database {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session = tx.query_row(
-            "SELECT id,owner,agent,project,agent_session,subject,root_mid,last_mid FROM sessions WHERE id=?1",
+            "SELECT id,owner,agent,project,agent_session,subject,root_mid,last_mid,cwd FROM sessions WHERE id=?1",
             [session_id], Self::map_session)?;
         let domain = mailbox.split('@').nth(1).unwrap_or("localhost");
         let mid = format!("<ema-{}@{}>",Uuid::new_v4(), domain);
