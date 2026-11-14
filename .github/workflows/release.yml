@@ -27,6 +27,15 @@ jobs:
             echo "::error::Release tags must point to commits already on main"
             exit 1
           }
+      - name: Verify free macOS ad-hoc signing configuration
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path("src-tauri/tauri.conf.json").read_text())
+          assert config["bundle"]["macOS"]["signingIdentity"] == "-"
+          print("Free ad-hoc macOS signing configured; no Apple notarization.")
+          PY
       - name: Check version consistency
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -102,15 +111,29 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "EMA ${{ github.ref_name }}"
           releaseBody: |
-            Experimental, unsigned preview of EMA (Email-Native Agent Gateway).
+            Experimental EMA (Email-Native Agent Gateway) alpha preview.
 
-            Packages for macOS (Apple Silicon and Intel), Windows, and Linux are attached.
-            Review the README's security limitations before connecting a mailbox.
-            Installer signing, notarization, and in-app auto-updates are NOT yet configured.
-            Do not use with a sensitive project or untrusted senders.
+            macOS bundles are ad-hoc signed, NOT Apple Developer ID signed or notarized.
+            macOS may ask users to allow EMA in System Settings > Privacy & Security.
+            Windows installers have no publisher certificate and may show SmartScreen warnings.
+            Linux installers are unsigned; Tauri automatic updates are not enabled.
+            See docs/INSTALL.zh-CN.md and docs/RELEASING.md and verify SHA256SUMS.
+            Live IMAP/SMTP + Codex integration and security acceptance remain incomplete.
+            Do not use with sensitive projects or untrusted senders.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+
+      - name: Verify ad-hoc macOS app signature
+        if: startsWith(matrix.platform, 'macos-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find target -type d -name 'EMA.app' -path '*/bundle/macos/*' -print -quit)"
+          test -n "$APP_PATH" || { echo "::error::No built EMA.app found"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
+          grep -q 'Signature=adhoc' /tmp/ema-codesign.log
 
   checksums:
     name: Attach SHA256 checksums
