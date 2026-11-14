@@ -261,9 +261,9 @@ export default function App() {
     try {
       const saved = await invoke<Settings>("get_settings");
       setSettings(saved);
+      setAllowlistText(saved.allowlist.join("\n"));
     } catch (e) { setNotice(String(e)); }
     setSecret("");
-    setAllowlistText(settings.allowlist.join("\n"));
     setNotice("");
     setView("dashboard");
     void refreshStats();
