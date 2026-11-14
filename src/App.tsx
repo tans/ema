@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import { ChevronDown, CircleCheck, Mail, RotateCw, Settings2 } from "lucide-react";
+import { ChevronDown, CircleCheck, RotateCw, Settings2 } from "lucide-react";
 import "./style.css";
 
 type Mail = {
@@ -72,6 +72,7 @@ export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -136,7 +137,7 @@ export default function App() {
   const available = agents.find(a => a.name === "codex");
   return <main className="app">
     <header className="header">
-      <div className="brand"><span className="brand-icon"><Mail size={18} /></span><strong>Email Agent</strong></div>
+      <div className="brand"><img className="brand-icon" src="/ema-logo.svg" alt="" /><div className="brand-title"><strong>EMA</strong><span>Email Agent</span></div></div>
       <div className="header-right">
         <select aria-label="Language" className="language" value={lang} onChange={e => patch({ language: e.target.value })}>
           <option value="zh-CN">中文</option><option value="en">English</option>
@@ -146,6 +147,7 @@ export default function App() {
         </span>
       </div>
     </header>
+    <div className="brand-accent" aria-hidden="true"><span /></div>
 
     <section className="section">
       <h2>{t.email}</h2>
@@ -194,8 +196,15 @@ export default function App() {
           {available?.installed ? <CircleCheck size={14}/> : null}{available?.installed ? t.available : t.unavailable}
         </span>
       </div>
-      <div className="routes-heading">{t.routes}</div>
-      <div className="routes">
+      <button type="button" className="routes-toggle" aria-expanded={routesOpen}
+        onClick={() => setRoutesOpen(!routesOpen)}>
+        <span>{t.routes}</span>
+        <span className="routes-toggle-meta">
+          {(settings.agent_routes ?? initial.agent_routes).filter(r => r.enabled).length}
+          <ChevronDown size={14} className={routesOpen ? "rotate" : ""} />
+        </span>
+      </button>
+      {routesOpen && <div className="routes">
         {(settings.agent_routes ?? initial.agent_routes).map((r, index) => {
           const status=agents.find(a=>a.name===r.agent);
           return <div className="route-row" key={r.agent}>
@@ -205,8 +214,8 @@ export default function App() {
               onChange={e=>patch({agent_routes:(settings.agent_routes ?? initial.agent_routes).map((x,i)=>i===index?{...x,enabled:e.target.checked}:x)})}/>
           </div>;
         })}
-      </div>
-      <small className="routes-note">{t.notSupported}</small>
+      </div>}
+      {routesOpen && <small className="routes-note">{t.notSupported}</small>}
     </section>
 
     <section className="section">
@@ -236,7 +245,6 @@ export default function App() {
     <button className="save" disabled={saving} onClick={save}>{saving ? t.saving : t.save}</button>
     {notice && <div className="notice" role="status">{notice}</div>}
     <div className="footer">
-      <span>{t.memory}</span>
       <span>{t.active} {stats?.running_jobs ?? 0} · {t.queue} {stats?.pending_jobs ?? 0}</span>
     </div>
   </main>;
