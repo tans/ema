@@ -124,13 +124,19 @@ jobs:
           prerelease: true
           args: ${{ matrix.args }}
 
-      - name: Verify ad-hoc macOS app signature
+      - name: Verify macOS app signature inside DMG
         if: startsWith(matrix.platform, 'macos-')
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH="$(find target -type d -name 'EMA.app' -path '*/bundle/macos/*' -print -quit)"
-          test -n "$APP_PATH" || { echo "::error::No built EMA.app found"; exit 1; }
+          DMG_PATH="$(find target -type f -name '*.dmg' -path '*/bundle/dmg/*' -print -quit)"
+          test -n "$DMG_PATH" || { echo "::error::No built DMG found"; exit 1; }
+          MOUNT="$RUNNER_TEMP/ema-dmg-verify"
+          mkdir -p "$MOUNT"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$MOUNT" "$DMG_PATH"
+          trap 'hdiutil detach -quiet "$MOUNT" || true' EXIT
+          APP_PATH="$MOUNT/EMA.app"
+          test -d "$APP_PATH" || { echo "::error::EMA.app absent from DMG"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
           grep -q 'Signature=adhoc' /tmp/ema-codesign.log
