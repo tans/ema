@@ -10,17 +10,27 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{
-      "label": "main",
-      "title": "Email Agent",
-      "width": 460,
-      "height": 630,
-      "minWidth": 420,
-      "minHeight": 530,
-      "resizable": true,
-      "center": true
-    }],
-    "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost" }
+    "windows": [
+      {
+        "label": "main",
+        "title": "Email Agent",
+        "width": 460,
+        "height": 630,
+        "minWidth": 420,
+        "minHeight": 530,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
   },
-  "bundle": { "active": true, "targets": "all" }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
 }

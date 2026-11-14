@@ -13,9 +13,45 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+
   rust:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --workspace
+
+  macos-package:
+    name: macOS DMG (ad-hoc signing)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Bundle macOS DMG without paid credentials
+        run: npx tauri build --bundles dmg
+      - name: Verify macOS app signature inside DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG_PATH="$(find target -type f -name '*.dmg' -path '*/bundle/dmg/*' -print -quit)"
+          test -n "$DMG_PATH" || { echo "::error::No built DMG found"; exit 1; }
+          MOUNT="$RUNNER_TEMP/ema-dmg-verify"
+          mkdir -p "$MOUNT"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$MOUNT" "$DMG_PATH"
+          trap 'hdiutil detach -quiet "$MOUNT" || true' EXIT
+          APP_PATH="$MOUNT/EMA.app"
+          test -d "$APP_PATH" || { echo "::error::EMA.app absent from DMG"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
+          grep -q 'Signature=adhoc' /tmp/ema-codesign.log
+      - name: Upload DMG for pre-release smoke testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: ema-macos-adhoc-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
