@@ -120,12 +120,19 @@ impl Database {
             VALUES (?1,?2,'in',strftime('%s','now'))", params![mid,session_id])?;
         if added == 0 { tx.rollback()?; return Ok(None); }
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
-        if enqueue {
-            tx.execute("INSERT INTO jobs(id,session_id,prompt,state) VALUES(?1,?2,?3,'queued')",
-                params![Uuid::new_v4().to_string(),session_id,prompt])?;
-        }
+        tx.execute("INSERT INTO jobs(id,session_id,prompt,state) VALUES(?1,?2,?3,?4)",
+            params![Uuid::new_v4().to_string(),session_id,prompt,if enqueue {"queued"} else {"awaiting_directory"}])?;
         tx.commit()?;
         Ok(Some(session_id))
+    }
+    pub fn pending_prompt(&self, session_id:&str) -> Result<Option<String>> {
+        let c=self.lock()?;
+        Ok(c.query_row("SELECT prompt FROM jobs WHERE session_id=?1 AND state='awaiting_directory' ORDER BY rowid LIMIT 1",
+            [session_id],|r|r.get(0)).optional()?)
+    }
+    pub fn resolve_pending(&self, session_id:&str)->Result<()> {
+        self.lock()?.execute("UPDATE jobs SET state='resolved' WHERE session_id=?1 AND state='awaiting_directory'",[session_id])?;
+        Ok(())
     }
     pub fn update_cwd(&self, session_id: &str, cwd: &str) -> Result<()> {
         self.lock()?.execute("UPDATE sessions SET cwd=?1 WHERE id=?2 AND cwd IS NULL", params![cwd,session_id])?;
