@@ -99,6 +99,15 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 4. Receive the result, reply to the same email and verify the original Codex session resumes.
 5. Close the window; verify the tray remains active and preferences persist.
 
+## Release platform policy
+
+EMA uses version-driven installation packages:
+
+- **Patch X.Y.Z (Z > 0)**, such as v0.1.4: **macOS M-series / Apple Silicon only** (ARM64 DMG).
+- **Minor or major X.Y.0**, such as v0.2.0 or v1.0.0: **all desktop platforms** (macOS Apple Silicon and Intel, Windows x64, Linux x64).
+
+This speeds up frequent patch releases. Intel Mac, Windows and Linux receive updated installers at the next minor or major release. Normal frontend/Rust CI remains enabled. See [release rules](docs/RELEASING.md).
+
 ## Releases
 
 [Public Alpha releases](https://github.com/tans/ema/releases) · [中文安装指南](docs/INSTALL.zh-CN.md) · [Release 构建说明](docs/RELEASING.md)
