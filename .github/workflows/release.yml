@@ -1,7 +1,7 @@
 name: Desktop Release
 
 # Tag pushes are the standard release route. The workflow's first merge to main
-# bootstraps the v0.1.0 alpha once, without requiring any paid credentials.
+# bootstraps the v0.1.1 alpha once, without requiring any paid credentials.
 on:
   push:
     tags:
@@ -61,7 +61,7 @@ jobs:
               assert os.environ["GH_REF_NAME"] == tag, "Tag and manifest version differ"
           else:
               assert os.environ["GH_REF_NAME"] == "main", "Manual/bootstrap releases must use main"
-              assert tag == "v0.1.0", "Branch bootstrap only supports v0.1.0; future releases require a version tag"
+              assert tag == "v0.1.1", "Branch bootstrap only supports v0.1.1; later releases require a version tag"
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
               f.write(f"tag={tag}\n")
           print("Valid release", tag)
@@ -98,14 +98,14 @@ jobs:
             echo "Existing draft release will receive build assets"
           else
             cat > /tmp/release-notes.md <<'NOTES'
-          # EMA v0.1.0 — Alpha preview
+          # EMA v0.1.1 — Alpha preview
 
-          **No New App. Just Email.** A local-first Rust/Tauri email gateway for Codex.
+          **No New App. Just Email.** A local-first Rust/Tauri email gateway with minimal bilingual settings, QQ Mail authorization-code preset, and Codex native session context.
 
           **Experimental and not production-safe:** Real mailbox/Codex integration,
           sender-authentication safeguards, approval flows and platform installation
           have not yet been fully verified. Use only a controlled test mailbox and
-          a non-sensitive project directory; keep workspace-write disabled.
+          non-sensitive project context; keep workspace-write disabled.
 
           - macOS: ad-hoc signed, **NOT** Apple Developer ID signed or notarized.
             A one-time allow decision may be needed in System Settings > Privacy & Security.
@@ -200,11 +200,11 @@ jobs:
           tagName: ${{ needs.validate.outputs.tag }}
           releaseName: "EMA ${{ needs.validate.outputs.tag }} (Alpha)"
           releaseBody: |
-            # EMA v0.1.0 — Public Alpha preview
+            # EMA v0.1.1 — Public Alpha preview
             Local-first email gateway for Codex (Rust + Tauri 2).
             **Experimental, not production-safe**: only use a controlled test
-            mailbox and non-sensitive, read-only project directories.
-            Sender authentication, action approvals, live mail/Agent validation,
+            mailbox and non-sensitive, read-only local context.
+            Sender authentication, action approvals, live QQ mail/Agent validation,
             and auto-updates are not yet complete.
 
             macOS: ad-hoc signed, NOT Apple notarized (first-run approval may be required).

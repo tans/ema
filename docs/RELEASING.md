@@ -4,7 +4,7 @@ This project uses **Tauri 2 + Rust + React**. Release automation is defined in [
 
 ## Versioning
 
-A tag `vX.Y.Z` triggers a release only when it refers to a commit already on `main`. The initial `v0.1.0` is bootstrapped once by merging the GitHub Actions release-workflow change into `main`; a GitHub-hosted job creates the version tag and drafts the release without paid credentials. Subsequent releases use explicit tags. The tag must match the version in:
+A tag `vX.Y.Z` triggers a release only when it refers to a commit already on `main`. For v0.1.1, merging the release-workflow update into `main` triggers a one-time public Alpha build; a GitHub-hosted job creates the version tag and drafts the release before building packages. Subsequent releases use explicit tags. The tag must match the version in:
 
 - `package.json`
 - `src-tauri/tauri.conf.json`
@@ -15,22 +15,22 @@ Do not reuse or force-update version tags. For later versions, update all four f
 
 ## Publish checklist
 
-1. Ensure the code is merged to `main` and Build CI is green. Use a tag to create an unpublished **Draft Pre-release** and verify installers before making them publicly downloadable. A controlled mailbox/Codex end-to-end test is required **before publishing**.
+1. Ensure the code is merged to `main` and Build CI is green. Use a tag to create an unpublished **Draft Pre-release**; assets are made publicly downloadable only after all platform build jobs and checksums pass. A controlled mailbox/Codex end-to-end test is required **before publishing**.
 2. Confirm the project license, security limitations, and the no-cost distribution policy: macOS ad-hoc signing (not notarized), Windows unsigned, Linux unsigned.
 3. Create a release tag on the verified `main` commit (example for the current code version):
 
    ```bash
    git checkout main
    git pull --ff-only
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.1
+   git push origin v0.1.1
    ```
 
 4. GitHub Actions validates versions, builds macOS ARM64 + Intel, Windows x64, and Linux x64, and uploads the installers to a **Draft / Pre-release**. A final job adds `SHA256SUMS` and **automatically publishes a public Pre-release only if all matrix builds succeed**. If any build fails the release remains a Draft (not publicly downloadable).
 5. Review [GitHub Releases](https://github.com/tans/ema/releases) and the [Release workflow](https://github.com/tans/ema/actions/workflows/release.yml). Verify `SHA256SUMS`, macOS ad-hoc signature, launch/tray/settings, and the local mailbox/Codex workflow on controlled test machines **before enabling the gateway or using sensitive code**. Publication of the Alpha build is automatic once packaging succeeds; it does **not** imply functional/security acceptance.
-6. Keep **Pre-release** checked for experimental versions. The workflow publishes `v0.1.0` as Alpha, never stable; platform installers remain unsigned/unnotarized as documented.
+6. Keep **Pre-release** checked for experimental versions. The workflow publishes `v0.1.1` as Alpha, never stable; platform installers remain unsigned/unnotarized as documented.
 
-**Exception for the initial Alpha:** merging the one-time `v0.1.0` release bootstrap configuration to `main` starts a GitHub Actions run which creates the tag and, when successful, publishes the pre-release. For future versions only a matching pushed version tag starts the normal release workflow.
+**Exception for the initial Alpha:** merging the one-time `v0.1.1` release bootstrap configuration to `main` starts a GitHub Actions run which creates the tag and, when successful, publishes the pre-release. For future versions only a matching pushed version tag starts the normal release workflow.
 
 ## Signing, notarization, and updater
 
