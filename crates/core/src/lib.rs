@@ -113,10 +113,19 @@ impl Gateway {
         let resolution=if let Some(ref session)=previous {
             if let Some(ref cwd)=session.cwd {
                 workspace::Resolution::Found(cwd.clone())
+            } else if session.project != "_agent_memory" {
+                workspace::Resolution::Found(cfg.project(&session.project)?.to_string_lossy().into_owned())
             } else { workspace::resolve(&self.dir,&self.database,cfg,&incoming.subject,&body,&session.id)? }
         } else { workspace::resolve(&self.dir,&self.database,cfg,&incoming.subject,&body,&incoming.message_id)? };
         let cwd=match &resolution { workspace::Resolution::Found(path)=>Some(path.as_str()), workspace::Resolution::Clarify=>None };
-        if let (Some(session),Some(path))=(previous.as_ref(),cwd) { self.database.update_cwd(&session.id,path)?; }
+        let original = if let Some(ref session)=previous { self.database.pending_prompt(&session.id)? } else { None };
+        let prompt = if let Some(ref initial)=original {
+            format!("{initial}\\n\\nDirectory clarification from sender:\\n{prompt}")
+        } else { prompt };
+        if let (Some(session),Some(path))=(previous.as_ref(),cwd) {
+            self.database.update_cwd(&session.id,path)?;
+            self.database.resolve_pending(&session.id)?;
+        }
         let enqueue=cwd.is_some();
         let stored=self.database.store_inbound(&incoming.message_id,&incoming.sender,previous.as_ref(),&agent,
             &project,&incoming.subject,&prompt,cwd,enqueue)?;
