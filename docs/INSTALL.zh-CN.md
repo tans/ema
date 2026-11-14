@@ -4,7 +4,7 @@
 
 ## 下载与验证
 
-1. 普通用户可从 [EMA Releases](https://github.com/tans/ema/releases) 下载**已经人工发布**的预览版本。Draft 仍不可公开下载。开发者在版本 Tag 发布前，可到 [GitHub Actions](https://github.com/tans/ema/actions/workflows/build.yml) 的成功 CI 运行记录下载有效期 7 天的 `ema-macos-adhoc-dmg` 测试附件。
+1. 普通用户可从 [EMA Releases](https://github.com/tans/ema/releases) 下载**公开的 Alpha Pre-release**。全部平台打包和校验成功后，GitHub Actions 自动公开预览版；若构建失败，则保留 Draft（不可公开下载）。开发者在版本 Tag 发布前，可到 [GitHub Actions](https://github.com/tans/ema/actions/workflows/build.yml) 的成功 CI 运行记录下载有效期 7 天的 `ema-macos-adhoc-dmg` 测试附件。
 2. 选择对应系统安装包：
    - **macOS Apple Silicon**：ARM64 / aarch64 的 DMG
    - **macOS Intel**：x86_64 的 DMG
