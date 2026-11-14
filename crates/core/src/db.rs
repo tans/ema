@@ -73,7 +73,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state);
             CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(state, next_attempt);
         "#)?;
-        let columns = c.prepare("PRAGMA table_info(sessions)")?.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut column_stmt=c.prepare("PRAGMA table_info(sessions)")?;
+        let columns=column_stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(column_stmt);
         if !columns.iter().any(|name| name == "cwd") { c.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", [])?; }
         c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);")?;
         // Never replay an interrupted agent run without human intervention.
