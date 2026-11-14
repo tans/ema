@@ -43,7 +43,6 @@ pub struct AgentRoute {
     pub agent: String,
     pub prefix: String,
     pub enabled: bool,
-    pub onboarding_completed: bool,
 }
 pub fn default_routes() -> Vec<AgentRoute> {
     vec![
@@ -75,6 +74,7 @@ pub struct Settings {
     pub poll_seconds: u64,
     pub progress_minutes: Vec<u64>,
     pub enabled: bool,
+    pub onboarding_completed: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
