@@ -10,9 +10,6 @@ on:
       - main
     paths:
       - ".github/workflows/release.yml"
-      - "crates/**"
-      - "src/**"
-      - "src-tauri/**"
       - "package.json"
   workflow_dispatch:
 
@@ -21,7 +18,7 @@ permissions:
 
 concurrency:
   group: desktop-release-ema
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
