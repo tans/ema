@@ -24,8 +24,8 @@ jobs:
     name: Validate release source and versions
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.version.outputs.tag }
-      should_release: ${{ steps.gate.outputs.should_release }
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.gate.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,8 +40,8 @@ jobs:
       - name: Check manifest versions and release ref
         id: version
         env:
-          GH_REF_TYPE: ${{ github.ref_type }
-          GH_REF_NAME: ${{ github.ref_name }
+          GH_REF_TYPE: ${{ github.ref_type }}
+          GH_REF_NAME: ${{ github.ref_name }}
         run: |
           python3 - <<'PY'
           import json
@@ -69,8 +69,8 @@ jobs:
       - name: Skip if this version is already public
         id: gate
         env:
-          GH_TOKEN: ${{ github.token }
-          RELEASE_TAG: ${{ steps.version.outputs.tag }
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           STATE="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
           if [[ "$STATE" == "false" ]]; then
@@ -90,8 +90,9 @@ jobs:
     steps:
       - name: Create unpublished alpha release (and tag if missing)
         env:
-          GH_TOKEN: ${{ github.token }
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Existing draft release will receive build assets"
@@ -120,7 +121,7 @@ jobs:
           fi
 
   bundle:
-    name: Build ${{ matrix.name }
+    name: Build ${{ matrix.name }}
     needs: [validate, initialize]
     if: needs.validate.outputs.should_release == 'true'
     permissions:
@@ -145,7 +146,7 @@ jobs:
             platform: windows-latest
             target: ""
             args: "--bundles nsis,msi"
-    runs-on: ${{ matrix.platform }
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -153,7 +154,7 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }
+          targets: ${{ matrix.target }}
       - name: Install Linux desktop dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -164,13 +165,13 @@ jobs:
       - name: Build and upload installers to draft release
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ needs.validate.outputs.tag }
-          releaseName: "EMA ${{ needs.validate.outputs.tag } (Alpha)"
+          tagName: ${{ needs.validate.outputs.tag }}
+          releaseName: "EMA ${{ needs.validate.outputs.tag }} (Alpha)"
           releaseDraft: true
           prerelease: true
-          args: ${{ matrix.args }
+          args: ${{ matrix.args }}
       - name: Verify macOS app ad-hoc signature inside DMG
         if: startsWith(matrix.platform, 'macos-')
         shell: bash
@@ -197,9 +198,9 @@ jobs:
     steps:
       - name: Verify all installers and publish SHA256SUMS
         env:
-          GH_TOKEN: ${{ github.token }
-          GH_REPO: ${{ github.repository }
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p bundles
@@ -220,9 +221,9 @@ jobs:
     steps:
       - name: Publish only after all platform builds pass
         env:
-          GH_TOKEN: ${{ github.token }
-          GH_REPO: ${{ github.repository }
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
