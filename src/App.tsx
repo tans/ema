@@ -359,7 +359,7 @@ export default function App() {
       <div className="guide-actions">
         {step > 1 && <button className="text-button" type="button" onClick={() => {setNotice("");setStep((step - 1) as Step);}}>
           <ArrowLeft size={15} />{t.back}</button>}
-        <button className="text-button" type="button" onClick={skipStep}>{t.skipStep}</button>
+        <button className="text-button" type="button" disabled={saving || sending || testing} onClick={skipStep}>{t.skipStep}</button>
         {step === 1 && <button className="primary-button" disabled={saving || testing} onClick={() => { void nextEmail(); }}>{t.next}<ArrowRight size={15}/></button>}
         {step === 2 && <button className="primary-button" disabled={saving} onClick={() => { void nextAllowlist(); }}>{t.allowSave}<ArrowRight size={15}/></button>}
         {step === 3 && <button className="primary-button" disabled={saving} onClick={() => {void finishGuide(testSent);}}>
@@ -452,7 +452,7 @@ export default function App() {
       <div className="header-right">
         {view !== "dashboard" && <select aria-label={t.language} className="language" value={language}
           onChange={e => patch({language:e.target.value})}><option value="zh-CN">中文</option><option value="en">English</option></select>}
-        {view === "welcome" && <button type="button" className="header-link" disabled={saving}
+        {view === "welcome" && <button type="button" className="header-link" disabled={saving || sending || testing}
           onClick={() => { void finishGuide(false); }}>{t.skipAll}</button>}
         {view === "settings" && <button className="header-button" type="button" aria-label={t.home}
           title={t.home} onClick={() => { void goHome(); }}><ArrowLeft size={18}/></button>}
