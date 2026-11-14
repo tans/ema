@@ -1,0 +1,135 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate version and release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure tag belongs to main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "::error::Release tags must point to commits already on main"
+            exit 1
+          }
+      - name: Check version consistency
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          package_version = json.loads(Path("package.json").read_text())["version"]
+          tauri_version = json.loads(Path("src-tauri/tauri.conf.json").read_text())["version"]
+          with Path("src-tauri/Cargo.toml").open("rb") as f:
+              desktop_version = tomllib.load(f)["package"]["version"]
+          with Path("crates/core/Cargo.toml").open("rb") as f:
+              core_version = tomllib.load(f)["package"]["version"]
+          assert len({package_version, tauri_version, desktop_version, core_version}) == 1, (
+              "package.json, Tauri config, and Cargo package versions must match"
+          )
+          expected = "v" + package_version
+          assert os.environ["RELEASE_TAG"] == expected, (
+              f"Tag must be {expected}; found {os.environ['RELEASE_TAG']}"
+          )
+          print(f"Validated {expected}")
+          PY
+
+  bundle:
+    name: Bundle ${{ matrix.name }}
+    needs: validate
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64
+            platform: macos-15
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - name: macOS Intel
+            platform: macos-15-intel
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+          - name: Linux x64
+            platform: ubuntu-22.04
+            target: ""
+            args: ""
+          - name: Windows x64
+            platform: windows-latest
+            target: ""
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config libssl-dev
+      - name: Install frontend dependencies
+        run: npm install
+      - name: Build and attach desktop installers to draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "EMA ${{ github.ref_name }}"
+          releaseBody: |
+            Experimental, unsigned preview of EMA (Email-Native Agent Gateway).
+
+            Packages for macOS (Apple Silicon and Intel), Windows, and Linux are attached.
+            Review the README's security limitations before connecting a mailbox.
+            Installer signing, notarization, and in-app auto-updates are NOT yet configured.
+            Do not use with a sensitive project or untrusted senders.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}
+
+  checksums:
+    name: Attach SHA256 checksums
+    needs: bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Calculate checksums for release downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p bundles
+          gh release download "$RELEASE_TAG" --dir bundles
+          (
+            cd bundles
+            find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+            test -s SHA256SUMS
+          )
+          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --clobber
