@@ -99,6 +99,9 @@ impl Gateway {
         let (agent, project, prompt) = if let Some(ref session) = previous {
             (session.agent.clone(), session.project.clone(), body)
         } else {
+            if !agent::is_available(&cfg.codex_command).await {
+                anyhow::bail!("Codex CLI unavailable; install and authenticate Codex before creating a session");
+            }
             let decision = router::route(cfg, &incoming.subject, &body).await?;
             (decision.agent, decision.project, decision.task)
         };
@@ -107,7 +110,7 @@ impl Gateway {
             &project, &incoming.subject, &prompt)?;
         if let Some(id) = stored {
             self.database.queue_reply(&id, &cfg.mail.address,
-                &format!("Task queued.\nAgent: {agent}\nProject: {project}\n\nReply to this email to continue the session."))?;
+                &format!("Task queued.\nAgent: {agent}\n\nReply to this email to continue the session."))?;
         }
         Ok(())
     }

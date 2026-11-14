@@ -50,6 +50,13 @@ fn login(c:&MailSettings,pass:&str)->Result<imap::Session<native_tls::TlsStream<
     let client=imap::connect((&*c.imap_host,c.imap_port),&c.imap_host,&tls)?;
     client.login(&c.username,pass).map_err(|e|anyhow::anyhow!("{}",e.0))
 }
+/// Validate the IMAP login without fetching or marking any message read.
+pub fn check_connection(c: &MailSettings, pass: &str) -> Result<()> {
+    let mut session = login(c, pass)?;
+    session.noop()?;
+    session.logout()?;
+    Ok(())
+}
 pub fn receive(c:&MailSettings,pass:&str)->Result<Vec<Incoming>> {
     let mut session=login(c,pass)?;
     session.select("INBOX")?;

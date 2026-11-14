@@ -3,8 +3,20 @@ use std::{process::Stdio, sync::Arc, time::{Duration, Instant}};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::Command};
 use crate::{config::Settings, db::{Database, Job, Session}};
 
+/// Detect the installed CLI when the first email creates a native session.
+pub async fn is_available(executable: &str) -> bool {
+    let mut command = Command::new(executable);
+    command.arg("--version").kill_on_drop(true)
+        .stdout(Stdio::null()).stderr(Stdio::null());
+    matches!(tokio::time::timeout(Duration::from_secs(5), command.status()).await,
+        Ok(Ok(status)) if status.success())
+}
+
 /// Execute the installed CLI directly; never send email content through a shell.
 pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Session) -> Result<String> {
+    if config.workspace_write && session.project == "_agent_memory" {
+        anyhow::bail!("write access requires an explicitly authorized project");
+    }
     let cwd = config.project(&session.project)?;
     let mut cmd = Command::new(&config.codex_command);
     cmd.arg("exec").arg("--json").arg("-C").arg(&cwd)
