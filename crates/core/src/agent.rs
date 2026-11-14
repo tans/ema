@@ -17,7 +17,11 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     if config.workspace_write && session.project == "_agent_memory" {
         anyhow::bail!("write access requires an explicitly authorized project");
     }
-    let cwd = config.project(&session.project)?;
+    let cwd = if let Some(path)=session.cwd.as_ref() {
+        let path=std::path::PathBuf::from(path).canonicalize()?;
+        if !path.is_dir() { anyhow::bail!("session directory is no longer available"); }
+        path
+    } else { config.project(&session.project)? };
     let mut cmd = Command::new(&config.codex_command);
     cmd.arg("exec").arg("--json").arg("-C").arg(&cwd)
         .arg("--sandbox").arg(if config.workspace_write { "workspace-write" } else { "read-only" });
