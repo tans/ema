@@ -90,9 +90,7 @@ impl Settings {
                 bail!("project alias must be alphanumeric, hyphen or underscore");
             }
             if !aliases.insert(&p.alias) { bail!("duplicate project alias"); }
-            if !p.path.canonicalize().context("project directory is not accessible")?.is_dir() {
-                bail!("project must be a directory");
-            }
+            // Retain legacy aliases even if their directories moved; resolve at execution time.
         }
         if self.enabled {
             if self.mail.address.trim().is_empty() || self.mail.imap_host.trim().is_empty()

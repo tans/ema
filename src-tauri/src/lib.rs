@@ -47,12 +47,19 @@ async fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAge
 
 #[tauri::command]
 async fn check_mail(settings: Settings, password: Option<String>) -> Result<(), String> {
-    settings.validate().map_err(|e| e.to_string())?;
+    // Testing a mailbox must not require enabling the Gateway or an allowlist.
+    let mut check = settings;
+    check.enabled = false;
+    check.validate().map_err(|e| e.to_string())?;
+    if check.mail.address.is_empty() || check.mail.username.is_empty()
+        || check.mail.imap_host.is_empty() {
+        return Err("Email address, login and IMAP host are required".into());
+    }
     let pass = match password {
         Some(s) if !s.is_empty() => s,
         _ => secret("mail").map_err(|e| e.to_string())?,
     };
-    let mail_config = settings.mail.clone();
+    let mail_config = check.mail.clone();
     tauri::async_runtime::spawn_blocking(move || mail::check_connection(&mail_config, &pass))
         .await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
