@@ -114,7 +114,7 @@ impl Settings {
             if route.agent.is_empty() || !["codex","cc","opencode","pi","omp","zcode","kimi","dsh","hermes","openclaw","gemini"].contains(&route.agent.as_str()) {
                 bail!("unsupported agent route");
             }
-            if prefix.is_empty() || prefix.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            if prefix.is_empty() || route.prefix != route.prefix.trim() || prefix.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 bail!("agent prefix must be a non-empty single token");
             }
             if !prefixes.insert(prefix) || !agents.insert(route.agent.as_str()) { bail!("duplicate agent or prefix"); }
