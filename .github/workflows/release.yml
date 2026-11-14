@@ -124,7 +124,7 @@ jobs:
           # This is safe only while the release is unpublished.
           STATE="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
           test "$STATE" = "true" || { echo "::error::Refusing to mutate a public tag"; exit 1; }
-          RELEASE_ID="$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '.id')"
+          RELEASE_ID="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
           gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -f target_commitish="$GITHUB_SHA" >/dev/null
           if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             TAG_SHA="$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
