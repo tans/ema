@@ -32,9 +32,12 @@ fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAgent> {
     let command = state.settings().codex_command;
     let mut items = Vec::new();
     for (name, executable, supported) in [
-        ("Codex", command.as_str(), true),
-        ("Claude Code", "claude", false),
-        ("OpenCode", "opencode", false),
+        ("codex", command.as_str(), true), ("cc", "claude", false),
+        ("opencode", "opencode", false), ("pi", "pi", false),
+        ("omp", "omp", false), ("zcode", "zcode", false),
+        ("kimi", "kimi", false), ("dsh", "dsh", false),
+        ("hermes", "hermes", false), ("openclaw", "openclaw", false),
+        ("gemini", "gemini", false),
     ] {
         items.push(DetectedAgent {
             name,
