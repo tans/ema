@@ -142,6 +142,7 @@ export default function App() {
   const [connectionOk, setConnectionOk] = useState(false);
   const [testSent, setTestSent] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
+  const [allowlistText, setAllowlistText] = useState("");
   const [notice, setNotice] = useState("");
   const language = settings.language === "en" ? "en" : "zh-CN";
   const t = labels[language];
@@ -176,6 +177,7 @@ export default function App() {
       const resolved = { ...value, mail: configured ? value.mail : qqMail("") };
       setSettings(resolved);
       setTestRecipient(resolved.allowlist[0] ?? "");
+      setAllowlistText(resolved.allowlist.join("\n"));
       setView(resolved.onboarding_completed ? "dashboard" : "welcome");
     }).catch(e => setNotice(String(e))).finally(() => setLoading(false));
     void refreshAgents();
@@ -244,7 +246,7 @@ export default function App() {
     } finally { setSending(false); }
   }
   async function finishGuide(enable = false) {
-    const canEnable = enable && testSent && agentAvailable && !!settings.mail.address && settings.allowlist.length > 0;
+    const canEnable = enable && testSent && connectionOk && agentAvailable && !!settings.mail.address && settings.allowlist.length > 0;
     const next = { ...settings, onboarding_completed: true, enabled: canEnable || settings.enabled };
     if (await persist(next)) { setView("dashboard"); setNotice(""); void refreshStats(); }
   }
@@ -261,6 +263,7 @@ export default function App() {
       setSettings(saved);
     } catch (e) { setNotice(String(e)); }
     setSecret("");
+    setAllowlistText(settings.allowlist.join("\n"));
     setNotice("");
     setView("dashboard");
     void refreshStats();
@@ -317,9 +320,9 @@ export default function App() {
   function whitelistFields() {
     return <div className="form-body">
       <label className="field"><span>{t.senders}</span>
-        <textarea rows={4} value={settings.allowlist.join("\n")}
+        <textarea rows={4} value={allowlistText}
           placeholder="you@example.com"
-          onChange={e => { patch({ allowlist: normalizeAllowlist(e.target.value) }); setTestSent(false); }} />
+          onChange={e => { setAllowlistText(e.target.value); patch({ allowlist: normalizeAllowlist(e.target.value) }); setTestSent(false); }} />
       </label>
       <p className="field-hint"><ShieldCheck size={14} /> {t.senderHelp}</p>
     </div>;
@@ -360,7 +363,7 @@ export default function App() {
         {step === 1 && <button className="primary-button" disabled={saving || testing} onClick={() => { void nextEmail(); }}>{t.next}<ArrowRight size={15}/></button>}
         {step === 2 && <button className="primary-button" disabled={saving} onClick={() => { void nextAllowlist(); }}>{t.allowSave}<ArrowRight size={15}/></button>}
         {step === 3 && <button className="primary-button" disabled={saving} onClick={() => {void finishGuide(testSent);}}>
-          {testSent && agentAvailable ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
+          {testSent && connectionOk && agentAvailable ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
       </div>
     </section>;
   }
