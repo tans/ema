@@ -4,7 +4,7 @@ This project uses **Tauri 2 + Rust + React**. Release automation is defined in [
 
 ## Versioning
 
-A tag `vX.Y.Z` triggers a release only when it refers to a commit already on `main`. The tag must match the version in:
+A tag `vX.Y.Z` triggers a release only when it refers to a commit already on `main`. The initial `v0.1.0` is bootstrapped once by merging the GitHub Actions release-workflow change into `main`; a GitHub-hosted job creates the version tag and drafts the release without paid credentials. Subsequent releases use explicit tags. The tag must match the version in:
 
 - `package.json`
 - `src-tauri/tauri.conf.json`
@@ -26,11 +26,11 @@ Do not reuse or force-update version tags. For later versions, update all four f
    git push origin v0.1.0
    ```
 
-4. GitHub Actions validates versions, builds macOS ARM64 + Intel, Windows x64, and Linux x64, and uploads the installers to a **Draft / Pre-release**. A final job adds `SHA256SUMS`.
-5. Review [GitHub Releases](https://github.com/tans/ema/releases) and the [Release workflow](https://github.com/tans/ema/actions/workflows/release.yml). Download installers and verify `SHA256SUMS`, macOS ad-hoc signature, launch/tray/settings, and the local mailbox/Codex workflow on controlled test machines before manually publishing the draft.
-6. In the GitHub release editor, keep **Pre-release** checked for experimental versions. Never label an unverified build as stable.
+4. GitHub Actions validates versions, builds macOS ARM64 + Intel, Windows x64, and Linux x64, and uploads the installers to a **Draft / Pre-release**. A final job adds `SHA256SUMS` and **automatically publishes a public Pre-release only if all matrix builds succeed**. If any build fails the release remains a Draft (not publicly downloadable).
+5. Review [GitHub Releases](https://github.com/tans/ema/releases) and the [Release workflow](https://github.com/tans/ema/actions/workflows/release.yml). Verify `SHA256SUMS`, macOS ad-hoc signature, launch/tray/settings, and the local mailbox/Codex workflow on controlled test machines **before enabling the gateway or using sensitive code**. Publication of the Alpha build is automatic once packaging succeeds; it does **not** imply functional/security acceptance.
+6. Keep **Pre-release** checked for experimental versions. The workflow publishes `v0.1.0` as Alpha, never stable; platform installers remain unsigned/unnotarized as documented.
 
-A release is **not** created when merely merging a PR. Only a matching pushed version tag starts the desktop release workflow.
+**Exception for the initial Alpha:** merging the one-time `v0.1.0` release bootstrap configuration to `main` starts a GitHub Actions run which creates the tag and, when successful, publishes the pre-release. For future versions only a matching pushed version tag starts the normal release workflow.
 
 ## Signing, notarization, and updater
 
@@ -41,7 +41,7 @@ A release is **not** created when merely merging a PR. Only a matching pushed ve
 - **Checksums**: the workflow appends `SHA256SUMS` to the draft release after all matrix jobs succeed. Hashes check file integrity but do not authenticate the developer independently.
 - **Updater**: disabled; no Tauri updater signing keys, endpoint or silent updates are configured. No Apple/Windows code-signing Secrets are required for current packaging.
 
-**Before a public preview:** Confirm live email-origin security boundaries, local Codex test flow and installer behavior. Keep the release as Draft until smoke testing has passed. SignPath, Apple Developer ID/notarization and signed Tauri Updater remain future, separately reviewed decisions. Do not commit signing keys, passwords, or API credentials.
+**Before enabling the gateway:** Verify live email-origin security boundaries, local Codex test flow and installer behavior. Public **Alpha** is explicitly for download/testing and must not be described as production-ready. Packaging success is not email/Agent security acceptance. SignPath, Apple Developer ID/notarization and signed Tauri Updater remain future, separately reviewed decisions. Do not commit signing keys, passwords, or API credentials.
 
 Reference: [Tauri macOS ad-hoc signing](https://tauri.app/distribute/sign/macos/).
 
@@ -49,7 +49,7 @@ Reference: [Tauri macOS ad-hoc signing](https://tauri.app/distribute/sign/macos/
 
 - Version is consistent and tag is reachable from `main`
 - GitHub Actions release matrix succeeds for all supported platforms
-- Installer files and `SHA256SUMS` are attached to the same draft release
+- Installer files and `SHA256SUMS` are attached before automatic public **Pre-release** publication
 - macOS package passes `codesign --verify`, and its signature is marked `Signature=adhoc`
 - Download instructions clearly state no Apple notarization / Windows publisher certificate
 - The desktop app launches, hides to tray, and reopens without losing settings
