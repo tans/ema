@@ -28,7 +28,7 @@ fn get_stats(state: tauri::State<'_, Arc<Gateway>>) -> Result<ema_core::db::Stat
 struct DetectedAgent { name: &'static str, installed: bool, supported: bool }
 
 #[tauri::command]
-async fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAgent> {
+fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAgent> {
     let command = state.settings().codex_command;
     let mut items = Vec::new();
     for (name, executable, supported) in [
@@ -38,7 +38,8 @@ async fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAge
     ] {
         items.push(DetectedAgent {
             name,
-            installed: ema_core::agent::is_available(executable).await,
+            installed: std::process::Command::new(executable).arg("--version")
+                .output().map(|o| o.status.success()).unwrap_or(false),
             supported,
         });
     }
