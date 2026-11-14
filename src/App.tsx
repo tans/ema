@@ -65,11 +65,11 @@ const labels = {
     finish: "完成", finishEnable: "完成并启用 EMA", finishSkip: "完成但暂不启用",
     running: "已启用", paused: "未启用",
     runningDesc: "正在监控符合白名单与主题前缀规则的新邮件",
-    pausedDesc: "邮件 Agent 已暂停，不会执行新任务",
+    pausedDesc: "邮件任务已暂停；本机 Agent 完成后仍会自动邮件汇报",
     overviewStats: "会话统计", sessions: "总会话", active: "执行中", queued: "排队中",
     completed: "已完成", failed: "失败 / 中断", received: "任务邮件",
     lastActivity: "最近活动", none: "暂无活动",
-    mailboxConfig: "邮箱连接", agent: "本地 Agent",
+    mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时默认汇报到当前邮箱。汇报可能包含 Agent 最终回答摘要。",
     unavailable: "未检测到", available: "可用",
     routes: "邮件主题前缀", notSupported: "未适配的 Agent 暂不可启用",
     enabled: "启用邮件 Agent", advanced: "高级设置", command: "Codex 命令",
@@ -103,11 +103,11 @@ const labels = {
     finish: "Finish", finishEnable: "Finish and enable EMA", finishSkip: "Finish without enabling",
     running: "Enabled", paused: "Disabled",
     runningDesc: "Monitoring new emails with allowed senders and agent prefixes",
-    pausedDesc: "The email Agent is paused and will not run tasks",
+    pausedDesc: "Inbound tasks are paused; local Agent completion reports remain automatic",
     overviewStats: "Session statistics", sessions: "Sessions", active: "Running", queued: "Queued",
     completed: "Completed", failed: "Failed / interrupted", received: "Task emails",
     lastActivity: "Last activity", none: "No activity yet",
-    mailboxConfig: "Email connection", agent: "Local Agents",
+    mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails a short result to this mailbox while running. Summaries may contain sensitive output.",
     unavailable: "Not found", available: "Available",
     routes: "Subject prefixes", notSupported: "Unavailable runners cannot be enabled",
     enabled: "Enable email Agent", advanced: "Advanced", command: "Codex executable",
@@ -400,7 +400,7 @@ export default function App() {
     return <div className="settings-page">
       <div className="page-title"><h1>{t.settings}</h1>
         <button className="text-button" type="button" onClick={openGuide}><CircleHelp size={15} />{t.reopenGuide}</button></div>
-      <section className="section"><h2>{t.mailboxConfig}</h2>{mailboxFields()}</section>
+      <section className="section"><h2>{t.mailboxConfig}</h2>{mailboxFields()}<p className="field-hint">{t.hookNotice}</p></section>
       <section className="section"><h2>{t.senders}</h2>{whitelistFields()}</section>
       <section className="section">
         <div className="section-heading"><h2>{t.agent}</h2><button type="button" className="icon-action"

@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod db;
 pub mod mail;
+pub mod hooks;
 pub mod router;
 pub mod workspace;
 
@@ -35,7 +36,25 @@ impl Gateway {
         tokio::spawn(async move { a.mail_loop().await; });
         let a = self.clone();
         tokio::spawn(async move { a.outbox_loop().await; });
+        let a = self.clone();
+        tokio::spawn(async move { a.hook_loop().await; });
         tokio::spawn(async move { self.job_loop().await; });
+    }
+    async fn hook_loop(self: Arc<Self>) {
+        let mut ticks=0_u64;
+        loop {
+            if ticks % 12 == 0 {
+                if let Err(err)=hooks::install(&self.dir) {
+                    tracing::warn!("hook sync failed: {err:#}");
+                }
+            }
+            let settings=self.settings();
+            if let Err(err)=hooks::tick(&self.dir,&settings,&self.database) {
+                tracing::warn!("hook collector failed: {err:#}");
+            }
+            ticks=ticks.wrapping_add(1);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
     }
     async fn mail_loop(self: Arc<Self>) {
         loop {
@@ -163,7 +182,7 @@ impl Gateway {
     async fn outbox_loop(self: Arc<Self>) {
         loop {
             let cfg = self.settings();
-            if cfg.enabled {
+            if !cfg.mail.address.trim().is_empty() && !cfg.mail.smtp_host.trim().is_empty() {
                 if let Err(err) = self.flush_outbox(cfg).await {
                     tracing::warn!("outbox failed: {err:#}");
                 }
@@ -172,7 +191,7 @@ impl Gateway {
         }
     }
     async fn flush_outbox(&self, cfg: Settings) -> Result<()> {
-        let pending = self.database.pending_outbox()?;
+        let pending = self.database.pending_outbox(cfg.enabled)?;
         if pending.is_empty() { return Ok(()); }
         let pass = config::secret("mail")?;
         for outgoing in pending {

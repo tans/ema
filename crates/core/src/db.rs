@@ -80,7 +80,16 @@ impl Database {
         let columns=column_stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
         drop(column_stmt);
         if !columns.iter().any(|name| name == "cwd") { c.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", [])?; }
-        c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);")?;
+        c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS hook_events (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+        ")?;
+        let mut outbox_stmt=c.prepare("PRAGMA table_info(outbox)")?;
+        let outbox_cols=outbox_stmt.query_map([], |r|r.get::<_,String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(outbox_stmt);
+        if !outbox_cols.iter().any(|name|name=="source") {
+            c.execute("ALTER TABLE outbox ADD COLUMN source TEXT NOT NULL DEFAULT 'task'",[])?;
+        }
         // Never replay an interrupted agent run without human intervention.
         c.execute("UPDATE jobs SET state='interrupted', completed_at=strftime('%s','now') WHERE state='running'", [])?;
         Ok(Self(Mutex::new(c)))
@@ -201,12 +210,35 @@ impl Database {
         tx.commit()?;
         Ok(())
     }
-    pub fn pending_outbox(&self) -> Result<Vec<Outbound>> {
+    pub fn is_ema_agent_session(&self, agent:&str, native_id:&str) -> Result<bool> {
+        Ok(self.lock()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE agent=?1 AND agent_session=?2)",
+            params![agent,native_id],|r|r.get::<_,i64>(0))? != 0)
+    }
+    pub fn queue_hook_report(&self, fingerprint:&str, recipient:&str,
+        subject:&str, body:&str) -> Result<bool> {
+        if recipient.trim().is_empty() { return Ok(false); }
+        let mut c=self.lock()?;
+        let tx=c.transaction()?;
+        let inserted=tx.execute(
+            "INSERT OR IGNORE INTO hook_events(fingerprint,created_at) VALUES(?1,strftime('%s','now'))",
+            [fingerprint])?;
+        if inserted == 0 { tx.rollback()?;return Ok(false); }
+        let domain=recipient.split('@').nth(1).unwrap_or("localhost");
+        let message_id=format!("<ema-hook-{}@{}>",Uuid::new_v4(),domain);
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source)
+            VALUES(?1,?2,?3,?4,'','',?5,'hook')",
+            params![Uuid::new_v4().to_string(),message_id,recipient,subject,body])?;
+        tx.commit()?;
+        Ok(true)
+    }
+    pub fn pending_outbox(&self, include_task:bool) -> Result<Vec<Outbound>> {
         let c=self.lock()?;
         let mut st=c.prepare("SELECT id,message_id,recipient,subject,in_reply_to,refs,body,attempts
             FROM outbox WHERE state='queued' AND next_attempt <= strftime('%s','now')
+                AND (?1=1 OR source='hook')
             ORDER BY rowid LIMIT 20")?;
-        let rows=st.query_map([],|r| Ok(Outbound {id:r.get(0)?,message_id:r.get(1)?,
+        let rows=st.query_map([include_task],|r| Ok(Outbound {id:r.get(0)?,message_id:r.get(1)?,
             recipient:r.get(2)?,subject:r.get(3)?,in_reply_to:r.get(4)?,
             references:r.get(5)?,body:r.get(6)?,attempts:r.get(7)?}))?;
         let outgoing=rows.collect::<rusqlite::Result<Vec<_>>>()?;

@@ -99,6 +99,26 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 4. Receive the result, reply to the same email and verify the original Codex session resumes.
 5. Close the window; verify the tray remains active and preferences persist.
 
+## Automatic local Agent completion reports (v0.1.6)
+
+**No separate Hook switches or SMTP settings.** As soon as EMA starts, its HookManager automatically installs/reconciles completion callbacks for locally configured **Codex, Claude Code, Gemini CLI, OpenCode and Pi**. Sessions started outside EMA (including Terminal and IDE sessions) send a short completion email **from and to the EMA mailbox address**. Email-triggered Codex sessions retain their existing single-threaded EMA reply, without duplicate Hook reports. This works even if inbound email-task polling is disabled.
+
+Hook implementations:
+
+| Agent | Native completion event | Global location |
+| --- | --- | --- |
+| Codex | `notify = ["/.../emit.sh", "codex"]` / `agent-turn-complete` | `~/.codex/config.toml` |
+| Claude Code | `Stop` command hook | `~/.claude/settings.json` |
+| Gemini CLI | `AfterAgent` command hook | `~/.gemini/settings.json` |
+| OpenCode | `session.idle` global plugin | `~/.config/opencode/plugins/ema-report.js` |
+| Pi | `agent_end` extension | `~/.pi/agent/extensions/ema-report.ts` |
+
+EMA registers hooks only for existing Agent configuration directories, and rechecks every minute, so an Agent installed later can be detected without adding a UI toggle. Existing hooks are retained; unparsable settings and unsupported or conflicting Codex `notify` commands are **not overwritten**. Before first modification, EMA writes a `*.ema-before-hook.bak` copy of any existing settings file. EMA only rewrites plugin files carrying its `EMA-MANAGED-HOOK` marker. Agent processes already running may need a restart/reload before they read new hooks.
+
+Hook callbacks only spool up to 64 KiB of JSON into the private local EMA app data folder; they do not have mailbox credentials or perform network requests. A short-lived heartbeat makes them inactive when EMA is stopped. A five-second collector processes the files, deduplicates events in SQLite and queues mail through EMA's existing SMTP retry worker. The message contains the agent name, project folder name, optional native session ID, and **up to 2,000 characters of the last response** (or just completion status when the Agent has no response field). Reports use the subject prefix `EMA Report`, so they never become new Agent commands.
+
+**Privacy:** Starting EMA automatically activates local session reporting to your configured mailbox. Final Agent responses can include sensitive text; do not use the same mailbox for private or regulated code without reviewing this tradeoff. The HookManager does not capture full transcripts or environment variables, and no email is sent until an EMA mailbox address is configured. On Windows the installation of native hooks is not yet implemented; the current patch-release policy prioritizes macOS Apple Silicon. Remaining Agent runners and Hook adapters are tracked separately.
+
 ## Release platform policy
 
 EMA uses version-driven installation packages:
