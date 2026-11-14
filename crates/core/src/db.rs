@@ -35,6 +35,9 @@ pub struct Outbound {
 }
 #[derive(Debug, Serialize)]
 pub struct Stats {
+    pub total_sessions: i64,
+    pub completed_jobs: i64,
+    pub failed_jobs: i64,
     pub pending_jobs: i64,
     pub running_jobs: i64,
     pub received_messages: i64,
@@ -222,6 +225,9 @@ impl Database {
     pub fn stats(&self)->Result<Stats> {
         let c=self.lock()?;
         Ok(Stats{
+            total_sessions:c.query_row("SELECT COUNT(*) FROM sessions",[],|r|r.get(0))?,
+            completed_jobs:c.query_row("SELECT COUNT(*) FROM jobs WHERE state='completed'",[],|r|r.get(0))?,
+            failed_jobs:c.query_row("SELECT COUNT(*) FROM jobs WHERE state IN ('failed','interrupted')",[],|r|r.get(0))?,
             pending_jobs:c.query_row("SELECT COUNT(*) FROM jobs WHERE state='queued'",[],|r|r.get(0))?,
             running_jobs:c.query_row("SELECT COUNT(*) FROM jobs WHERE state='running'",[],|r|r.get(0))?,
             received_messages:c.query_row("SELECT COUNT(*) FROM messages WHERE direction='in'",[],|r|r.get(0))?,
