@@ -60,7 +60,7 @@ jobs:
               core = tomllib.load(f)["package"]["version"]
           assert len({package, tauri["version"], desktop, core}) == 1, "Version manifests differ"
           assert tauri["bundle"]["macOS"]["signingIdentity"] == "-", "Free macOS ad-hoc signing missing"
-          assert re.fullmatch(r"(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)", package), "Expected numeric X.Y.Z version"
+          assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", package), "Expected numeric X.Y.Z version"
           patch = int(package.split(".")[2])
           scope = "patch" if patch > 0 else "full"
           matrix = [
@@ -266,7 +266,7 @@ jobs:
           done
           (
             cd bundles
-            printf '%s\\0' "${files[@]}" | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+            printf '%s\0' "${files[@]}" | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
             test -s SHA256SUMS
           )
           gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --clobber
