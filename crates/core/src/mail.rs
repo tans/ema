@@ -61,9 +61,13 @@ pub fn receive(c:&MailSettings,pass:&str,last_uid:u32,known_validity:u32)->Resul
     let mut session=login(c,pass)?;
     let mailbox = session.select("INBOX")?;
     let validity = mailbox.uid_validity.unwrap_or(0);
-    let cursor = if known_validity != validity { 0 } else { last_uid };
+    // First installation or UIDVALIDITY reset: start from future mail only.
+    if known_validity == 0 || known_validity != validity {
+        return Ok((Vec::new(),mailbox.uid_next.unwrap_or(1).saturating_sub(1),validity));
+    }
+    let cursor = last_uid;
     let query = format!("UID {}:*", cursor.saturating_add(1));
-    let mut uids:Vec<u32>=session.uid_search(query)?.into_iter().filter(|uid| *uid > cursor).collect();
+    let mut uids:Vec<u32>=session.uid_search(&query)?.into_iter().filter(|uid| *uid > cursor).collect();
     uids.sort_unstable();
     let mut result=Vec::new();
     let mut watermark=cursor;
