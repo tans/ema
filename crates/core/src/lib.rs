@@ -120,7 +120,7 @@ impl Gateway {
         let cwd=match &resolution { workspace::Resolution::Found(path)=>Some(path.as_str()), workspace::Resolution::Clarify=>None };
         let original = if let Some(ref session)=previous { self.database.pending_prompt(&session.id)? } else { None };
         let prompt = if let Some(ref initial)=original {
-            format!("{initial}\\n\\nDirectory clarification from sender:\\n{prompt}")
+            format!("{initial}\n\nDirectory clarification from sender:\n{prompt}")
         } else { prompt };
         if let (Some(session),Some(path))=(previous.as_ref(),cwd) {
             self.database.update_cwd(&session.id,path)?;
