@@ -53,8 +53,9 @@ impl Gateway {
         let mail_config = config.mail.clone();
         let pass = password.clone();
         let (last,validity) = self.database.cursor(&mail_config.address)?;
-        let (incoming, _watermark, current_validity) = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass, last, validity)).await??;
+        let (incoming, fetched_watermark, current_validity) = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass, last, validity)).await??;
         let mut watermark = if validity == current_validity { last } else { 0 };
+        let incoming_count_is_zero=incoming.is_empty();
         for msg in incoming {
             let uid=msg.uid;
             match self.on_message(&config, msg).await {
@@ -63,7 +64,7 @@ impl Gateway {
             }
         }
         // UID cursor never modifies user read/unread state.
-        if validity != current_validity && watermark == 0 { self.database.set_cursor(&config.mail.address, 0, current_validity)?; }
+        if validity != current_validity || incoming_count_is_zero { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
         Ok(())
     }
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<()> {
