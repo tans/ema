@@ -5,6 +5,7 @@ use std::{fs, path::{Path, PathBuf}};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailSettings {
+    pub provider: String,
     pub address: String,
     pub username: String,
     pub imap_host: String,
@@ -14,7 +15,7 @@ pub struct MailSettings {
 }
 impl Default for MailSettings {
     fn default() -> Self {
-        Self { address: String::new(), username: String::new(), imap_host: String::new(),
+        Self { provider: "custom".into(), address: String::new(), username: String::new(), imap_host: String::new(),
             imap_port: 993, smtp_host: String::new(), smtp_port: 465 }
     }
 }
@@ -40,6 +41,7 @@ pub struct Project {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub language: String,
     pub mail: MailSettings,
     pub router: RouterSettings,
     pub allowlist: Vec<String>,
@@ -53,7 +55,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            mail: MailSettings::default(), router: RouterSettings::default(),
+            language: "zh-CN".into(), mail: MailSettings::default(), router: RouterSettings::default(),
             allowlist: Vec::new(), projects: Vec::new(), codex_command: "codex".into(),
             workspace_write: false, poll_seconds: 30, progress_minutes: vec![10, 30, 60],
             enabled: false,
@@ -68,6 +70,13 @@ impl Settings {
         Ok(settings)
     }
     pub fn validate(&self) -> Result<()> {
+        if !["zh-CN", "en"].contains(&self.language.as_str()) { bail!("unsupported language"); }
+        if !["qq", "custom"].contains(&self.mail.provider.as_str()) { bail!("unsupported mail provider"); }
+        if self.mail.provider == "qq" && (self.mail.imap_host != "imap.qq.com"
+            || self.mail.imap_port != 993 || self.mail.smtp_host != "smtp.qq.com"
+            || self.mail.smtp_port != 465 || self.mail.username != self.mail.address) {
+            bail!("QQ Mail requires the preset TLS hosts and full mailbox as username");
+        }
         if self.poll_seconds < 15 || self.poll_seconds > 3600 {
             bail!("poll_seconds must be between 15 and 3600");
         }
@@ -81,17 +90,16 @@ impl Settings {
                 bail!("project alias must be alphanumeric, hyphen or underscore");
             }
             if !aliases.insert(&p.alias) { bail!("duplicate project alias"); }
-            if !p.path.canonicalize().context("project directory is not accessible")?.is_dir() {
-                bail!("project must be a directory");
-            }
+            // Retain legacy aliases even if their directories moved; resolve at execution time.
         }
         if self.enabled {
             if self.mail.address.trim().is_empty() || self.mail.imap_host.trim().is_empty()
                 || self.mail.smtp_host.trim().is_empty() || self.mail.username.trim().is_empty() {
                 bail!("configure mail account before enabling gateway");
             }
-            if self.allowlist.is_empty() || self.projects.is_empty() {
-                bail!("at least one approved sender and project are required");
+            if self.allowlist.is_empty() { bail!("at least one approved sender is required"); }
+            if self.workspace_write && self.projects.is_empty() {
+                bail!("workspace-write requires an explicitly authorized legacy project; memory never grants write access");
             }
         }
         Ok(())
@@ -105,6 +113,11 @@ impl Settings {
         Ok(())
     }
     pub fn project(&self, alias: &str) -> Result<PathBuf> {
+        if alias == "_agent_memory" {
+            return std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from).filter(|p| p.is_dir())
+                .context("home directory unavailable for agent-native context");
+        }
         let project = self.projects.iter().find(|p| p.alias == alias)
             .context("project is not authorized")?;
         let path = project.path.canonicalize()?;

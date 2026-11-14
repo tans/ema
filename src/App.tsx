@@ -1,163 +1,230 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
-import { Activity, ChevronDown, CircleCheck, Folder, Mail, Plus, Settings2, ShieldCheck, Terminal, Trash2 } from "lucide-react";
+import { ChevronDown, CircleCheck, Mail, RotateCw, Settings2 } from "lucide-react";
+import "./style.css";
 
-type Project={alias:string;path:string};
-type Settings={
-  mail:{address:string;username:string;imap_host:string;imap_port:number;smtp_host:string;smtp_port:number};
-  router:{base_url:string;model:string};
-  allowlist:string[];projects:Project[];
-  codex_command:string;workspace_write:boolean;poll_seconds:number;progress_minutes:number[];enabled:boolean;
+type Mail = {
+  provider: string; address: string; username: string;
+  imap_host: string; imap_port: number; smtp_host: string; smtp_port: number;
 };
-type Stats={pending_jobs:number;running_jobs:number;received_messages:number;last_activity:number|null};
-type AgentStatus={installed:boolean;command:string};
-const blank:Settings={
-  mail:{address:"",username:"",imap_host:"",imap_port:993,smtp_host:"",smtp_port:465},
-  router:{base_url:"https://api.openai.com/v1",model:""},allowlist:[],projects:[],
-  codex_command:"codex",workspace_write:false,poll_seconds:30,progress_minutes:[10,30,60],enabled:false
+type Settings = {
+  language: string; mail: Mail;
+  router: { base_url: string; model: string };
+  allowlist: string[]; projects: { alias: string; path: string }[];
+  codex_command: string; workspace_write: boolean;
+  poll_seconds: number; progress_minutes: number[];
+  enabled: boolean;
 };
+type Agent = { name: string; installed: boolean; supported: boolean };
+type Stats = { pending_jobs: number; running_jobs: number; received_messages: number };
+const initial: Settings = {
+  language: "zh-CN",
+  mail: { provider: "qq", address: "", username: "", imap_host: "imap.qq.com",
+    imap_port: 993, smtp_host: "smtp.qq.com", smtp_port: 465 },
+  router: { base_url: "https://api.openai.com/v1", model: "" },
+  allowlist: [], projects: [], codex_command: "codex",
+  workspace_write: false, poll_seconds: 30, progress_minutes: [10, 30, 60],
+  enabled: false,
+};
+const translations = {
+  "zh-CN": {
+    running:"已开启", paused:"未开启", email:"邮箱", qq:"QQ 邮箱", other:"其他邮箱",
+    address:"邮箱地址", auth:"授权码", authPlaceholder:"输入 QQ 邮箱授权码",
+    password:"应用密码", savedSecret:"留空则沿用已保存的凭据",
+    help:"获取授权码", test:"测试连接", testing:"连接中…",
+    tested:"IMAP 连接成功", mailServer:"收发服务器",
+    agent:"本地 Agent", check:"重新检测", available:"可用", unavailable:"未检测到",
+    pending:"已安装，暂不支持执行", senders:"允许发信的邮箱", sendersPlaceholder:"you@example.com",
+    enabled:"启用邮件 Agent", advanced:"高级设置", command:"Codex 命令",
+    poll:"收信间隔（秒）", save:"保存设置", saving:"保存中…",
+    saved:"已保存", active:"运行中", queue:"排队中",
+    imap:"IMAP 服务器", smtp:"SMTP 服务器", port:"端口",
+    error:"操作失败", credentials:"请输入邮箱地址和授权码", unsafe:"请至少填写一个允许的发件人",
+    memory:"项目由 Agent 上下文识别 · 默认只读"
+  },
+  en: {
+    running:"Enabled", paused:"Disabled", email:"Email", qq:"QQ Mail", other:"Other IMAP/SMTP",
+    address:"Email address", auth:"Authorization code", authPlaceholder:"QQ Mail authorization code",
+    password:"App password", savedSecret:"Leave blank to keep the saved credential",
+    help:"Get authorization code", test:"Test connection", testing:"Connecting…",
+    tested:"IMAP connection successful", mailServer:"Mail servers",
+    agent:"Local Agent", check:"Scan again", available:"Available", unavailable:"Not found",
+    pending:"Detected, runner unavailable", senders:"Allowed senders", sendersPlaceholder:"you@example.com",
+    enabled:"Enable email Agent", advanced:"Advanced", command:"Codex executable",
+    poll:"Poll interval (seconds)", save:"Save settings", saving:"Saving…",
+    saved:"Saved", active:"Running", queue:"Queued",
+    imap:"IMAP host", smtp:"SMTP host", port:"Port",
+    error:"Operation failed", credentials:"Enter an email address and authorization code", unsafe:"Add at least one allowed sender",
+    memory:"Agent chooses context from native memory · read-only"
+  }
+};
+const qqMail = (address: string): Mail => ({
+  provider: "qq", address, username: address,
+  imap_host: "imap.qq.com", imap_port: 993,
+  smtp_host: "smtp.qq.com", smtp_port: 465,
+});
 
-export default function App(){
-  const [settings,setSettings]=useState<Settings>(blank);
-  const [stats,setStats]=useState<Stats|null>(null);
-  const [agent,setAgent]=useState<AgentStatus|null>(null);
-  const [advanced,setAdvanced]=useState(false);
-  const [editing,setEditing]=useState<"mail"|"router"|"agent"|"projects"|"access"|null>(null);
-  const [secrets,setSecrets]=useState<Record<string,string>>({mail:"",llm:"",access:""});
-  const [notice,setNotice]=useState("");
-  const [busy,setBusy]=useState(false);
-  const patch=(s:Partial<Settings>)=>setSettings(prev=>({...prev,...s}));
-  const changeMail=(key:keyof Settings["mail"],value:string|number)=>
-    patch({mail:{...settings.mail,[key]:value}});
-  const changeRouter=(key:keyof Settings["router"],value:string)=>
-    patch({router:{...settings.router,[key]:value}});
-  const refresh=async()=>{
-    try {
-      const [state,summary,installed]=await Promise.all([
-        invoke<Settings>("get_settings"),invoke<Stats>("get_stats"),invoke<AgentStatus>("agent_status")
-      ]);
-      setSettings(state);setStats(summary);setAgent(installed);
-    }catch(e){setNotice(String(e));}
-  };
-  useEffect(()=>{
+export default function App() {
+  const [settings, setSettings] = useState<Settings>(initial);
+  const [secret, setSecret] = useState("");
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [notice, setNotice] = useState("");
+  const lang = settings.language === "en" ? "en" : "zh-CN";
+  const t = translations[lang];
+
+  function patch(p: Partial<Settings>) { setSettings(s => ({ ...s, ...p })); }
+  function patchMail(p: Partial<Mail>) {
+    setSettings(s => ({ ...s, mail: { ...s.mail, ...p } }));
+  }
+  function useProvider(value: string) {
+    setNotice("");
+    if (value === "qq") patchMail(qqMail(settings.mail.address));
+    else patchMail({ provider: "custom" });
+  }
+  function changeAddress(value: string) {
+    patchMail(settings.mail.provider === "qq" ? { address: value, username: value } : { address: value });
+  }
+  async function refreshAgents() {
+    try { setAgents(await invoke<Agent[]>("detect_agents")); }
+    catch { setAgents([]); }
+  }
+  useEffect(() => {
+    invoke<Settings>("get_settings").then(value => {
+      const fresh = !value.mail.address && !value.mail.imap_host;
+      setSettings(fresh ? { ...value, mail: qqMail("") } : value);
+    }).catch(e => setNotice(String(e)));
+    refreshAgents();
+    const refresh = () => invoke<Stats>("get_stats").then(setStats).catch(() => {});
     refresh();
-    const timer=setInterval(()=>{invoke<Stats>("get_stats").then(setStats).catch(()=>{});},10000);
-    return ()=>clearInterval(timer);
-  },[]);
-  const save=async()=>{
-    setBusy(true);setNotice("");
+    const timer = setInterval(refresh, 12000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function save() {
+    setNotice("");
+    if (settings.enabled && settings.allowlist.length === 0) {
+      setNotice(t.unsafe); return;
+    }
+    setSaving(true);
     try {
-      for(const [key,value] of Object.entries(secrets)){
-        if(value.trim()) await invoke("set_secret",{name:key,value});
-      }
-      await invoke("save_settings",{settings});
-      setSecrets({mail:"",llm:"",access:""});
-      setEditing(null);
-      setNotice("Settings saved");
-      await refresh();
-    }catch(e){setNotice(String(e));}
-    finally{setBusy(false);}
-  };
-  const addProject=()=>patch({projects:[...settings.projects,{alias:"",path:""}]});
-  const setProject=(idx:number,key:keyof Project,value:string)=>patch({projects:settings.projects.map((p,i)=>i===idx?{...p,[key]:value}:p)});
-  const setAllowlist=(s:string)=>patch({allowlist:s.split(/[\n,]/).map(x=>x.trim().toLowerCase()).filter(Boolean)});
-  const formatLast=stats?.last_activity?
-    new Date(stats.last_activity*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):"Never";
-  return <main className="window">
-    <header className="top">
-      <div className="brand"><div className="logo"><Mail size={20}/></div>
-        <div><h1>Email Agent</h1><p>Local Super Agent Gateway</p></div></div>
-      <span className={"status "+(settings.enabled?"on":"off")}><i/>{settings.enabled?"Enabled":"Disabled"}</span>
+      // Only persist newly supplied secrets; the UI never reads credentials back.
+      if (secret.trim()) await invoke("set_secret", { name: "mail", value: secret.trim() });
+      await invoke("save_settings", { settings });
+      setSecret("");
+      setNotice(t.saved);
+    } catch (e) { setNotice(t.error + ": " + String(e)); }
+    finally { setSaving(false); }
+  }
+  async function testMail() {
+    if (!settings.mail.address || (!secret.trim() && !settings.mail.imap_host)) {
+      setNotice(t.credentials); return;
+    }
+    setTesting(true); setNotice("");
+    try {
+      await invoke("check_mail", { settings, password: secret.trim() || null });
+      setNotice(t.tested);
+    } catch (e) { setNotice(t.error + ": " + String(e)); }
+    finally { setTesting(false); }
+  }
+  const selected = settings.mail.provider === "qq" ? "qq" : "custom";
+  const available = agents.find(a => a.name === "Codex");
+  return <main className="app">
+    <header className="header">
+      <div className="brand"><span className="brand-icon"><Mail size={18} /></span><strong>Email Agent</strong></div>
+      <div className="header-right">
+        <select aria-label="Language" className="language" value={lang} onChange={e => patch({ language: e.target.value })}>
+          <option value="zh-CN">中文</option><option value="en">English</option>
+        </select>
+        <span className={"state " + (settings.enabled ? "online" : "")}>
+          <i /> {settings.enabled ? t.running : t.paused}
+        </span>
+      </div>
     </header>
-    <section className="mail-section">
-      <div className="small-label">EMAIL ACCOUNT</div>
-      <button className="mail-row" onClick={()=>setEditing(editing==="mail"?null:"mail")}>
-        <div><strong>{settings.mail.address||"Connect your email"}</strong>
-        <p>{settings.mail.imap_host||"IMAP / SMTP setup required"}</p></div>
-        <span className="right"><CircleCheck size={17} className={settings.mail.address?"healthy":"muted"}/><ChevronDown size={15}/></span>
-      </button>
-    </section>
-    <section className="rows">
-      <ConfigRow icon={<Terminal size={17}/>} label="Default Agent" value={agent?.installed?"Codex · Installed":"Codex · Not detected"} onClick={()=>setEditing(editing==="agent"?null:"agent")}/>
-      <ConfigRow icon={<Activity size={17}/>} label="Router Model" value={settings.router.model||"Default project"} onClick={()=>setEditing(editing==="router"?null:"router")}/>
-      <ConfigRow icon={<Folder size={17}/>} label="Project Directories" value={settings.projects.length+" authorized"} onClick={()=>setEditing(editing==="projects"?null:"projects")}/>
-      <ConfigRow icon={<ShieldCheck size={17}/>} label="Allowed Senders" value={settings.allowlist.length+" addresses"} onClick={()=>setEditing(editing==="access"?null:"access")}/>
-    </section>
-    {editing&&<section className="editor">
-      <div className="editor-title">{({mail:"Email connection",router:"AI routing",agent:"Local Agent",projects:"Authorized projects",access:"Email access"})[editing]}</div>
-      {editing==="mail"&&<>
-        <Field label="Email address" value={settings.mail.address} onChange={v=>changeMail("address",v)} placeholder="agent@example.com"/>
-        <Field label="Login username" value={settings.mail.username} onChange={v=>changeMail("username",v)} placeholder="agent@example.com"/>
-        <div className="two">
-          <Field label="IMAP host" value={settings.mail.imap_host} onChange={v=>changeMail("imap_host",v)} placeholder="imap.example.com"/>
-          <Field label="IMAP port" type="number" value={String(settings.mail.imap_port)} onChange={v=>changeMail("imap_port",Number(v))}/>
-          <Field label="SMTP host" value={settings.mail.smtp_host} onChange={v=>changeMail("smtp_host",v)} placeholder="smtp.example.com"/>
-          <Field label="SMTP port" type="number" value={String(settings.mail.smtp_port)} onChange={v=>changeMail("smtp_port",Number(v))}/>
+
+    <section className="section">
+      <h2>{t.email}</h2>
+      <div className="choice">
+        <button className={selected === "qq" ? "selected" : ""} onClick={() => useProvider("qq")}>{t.qq}</button>
+        <button className={selected === "custom" ? "selected" : ""} onClick={() => useProvider("custom")}>{t.other}</button>
+      </div>
+      <label className="field"><span>{t.address}</span>
+        <input autoComplete="email" type="email" value={settings.mail.address}
+          placeholder="name@qq.com" onChange={e => changeAddress(e.target.value)} />
+      </label>
+      {selected === "custom" && <>
+        <label className="field"><span>{t.address === "Email address" ? "Login username" : "登录用户名"}</span>
+          <input value={settings.mail.username} onChange={e => patchMail({ username: e.target.value })} />
+        </label>
+        <div className="servers">
+          <label className="field"><span>{t.imap}</span><input value={settings.mail.imap_host}
+            onChange={e => patchMail({ imap_host: e.target.value })} /></label>
+          <label className="field port"><span>{t.port}</span><input type="number" value={settings.mail.imap_port}
+            onChange={e => patchMail({ imap_port: Number(e.target.value) })} /></label>
+          <label className="field"><span>{t.smtp}</span><input value={settings.mail.smtp_host}
+            onChange={e => patchMail({ smtp_host: e.target.value })} /></label>
+          <label className="field port"><span>{t.port}</span><input type="number" value={settings.mail.smtp_port}
+            onChange={e => patchMail({ smtp_port: Number(e.target.value) })} /></label>
         </div>
-        <Field label="App password (saved in OS Keychain)" type="password" value={secrets.mail} onChange={v=>setSecrets({...secrets,mail:v})} placeholder="Leave empty to keep existing"/>
       </>}
-      {editing==="router"&&<>
-        <Field label="OpenAI-compatible endpoint" value={settings.router.base_url} onChange={v=>changeRouter("base_url",v)}/>
-        <Field label="Model" value={settings.router.model} onChange={v=>changeRouter("model",v)} placeholder="Optional when using one project"/>
-        <Field label="API key (OS Keychain)" type="password" value={secrets.llm} onChange={v=>setSecrets({...secrets,llm:v})} placeholder="Leave empty to keep existing"/>
-      </>}
-      {editing==="agent"&&<>
-        <Field label="Codex CLI command" value={settings.codex_command} onChange={v=>patch({codex_command:v})}/>
-        <p className="hint">The CLI manages its own model credentials, Skills and MCP. EMA does not edit its configuration.</p>
-      </>}
-      {editing==="projects"&&<>
-        {settings.projects.map((p,i)=><div className="project" key={i}>
-          <Field label="Alias" value={p.alias} onChange={v=>setProject(i,"alias",v)} placeholder="mfggo"/>
-          <Field label="Absolute directory" value={p.path} onChange={v=>setProject(i,"path",v)} placeholder="/workspace/mfggo"/>
-          <button className="iconbutton" title="Remove project" onClick={()=>patch({projects:settings.projects.filter((_,j)=>i!==j)})}><Trash2 size={15}/></button>
-        </div>)}
-        <button className="outline full" onClick={addProject}><Plus size={14}/> Add project</button>
-      </>}
-      {editing==="access"&&<>
-        <label className="field"><span>Allowed addresses (one per line)</span>
-          <textarea rows={3} value={settings.allowlist.join("\n")} onChange={e=>setAllowlist(e.target.value)} placeholder="you@example.com"/></label>
-        <p className="hint">Email sender addresses alone are not proof of identity. Keep the Agent in read-only mode unless you have an authenticated mail channel.</p>
-      </>}
-      <div className="editor-actions"><button className="primary" disabled={busy} onClick={save}>{busy?"Saving…":"Save settings"}</button>
-        <button className="outline" onClick={()=>setEditing(null)}>Close</button></div>
-    </section>}
-    <section className="summary">
-      <div className="summary-top"><strong>Gateway activity</strong><span><i className={settings.enabled?"green-dot":"gray-dot"}/>{settings.enabled?"Enabled":"Disabled"}</span></div>
-      <div className="metrics">
-        <div><b>{stats?.running_jobs??0}</b><span>Running</span></div>
-        <div><b>{stats?.pending_jobs??0}</b><span>Queued</span></div>
-        <div><b>{formatLast}</b><span>Last mail</span></div>
+      <label className="field"><span>{selected === "qq" ? t.auth : t.password}</span>
+        <input autoComplete="new-password" type="password" value={secret}
+          placeholder={selected === "qq" ? t.authPlaceholder : t.savedSecret}
+          onChange={e => setSecret(e.target.value)} /></label>
+      <div className="inline-actions">
+        {selected === "qq" && <a href="https://help.mail.qq.com/detail/106/985" target="_blank" rel="noreferrer">{t.help}</a>}
+        <button className="link-button" disabled={testing} onClick={testMail}>
+          {testing ? t.testing : t.test}
+        </button>
       </div>
     </section>
-    <div className="bottom">
-      <label className="switch-row"><span>Enable gateway</span>
-        <input type="checkbox" checked={settings.enabled} onChange={e=>patch({enabled:e.target.checked})}/></label>
-      <button className="outline" onClick={()=>setAdvanced(!advanced)}><Settings2 size={14}/> Advanced settings <ChevronDown size={14}/></button>
+
+    <section className="section">
+      <div className="line-heading"><h2>{t.agent}</h2>
+        <button className="icon-action" aria-label={t.check} title={t.check} onClick={refreshAgents}>
+          <RotateCw size={14} /></button></div>
+      <div className="agent-line">
+        <span className="agent-name">Codex</span>
+        <span className={available?.installed ? "agent-ok" : "agent-missing"}>
+          {available?.installed ? <CircleCheck size={14}/> : null}{available?.installed ? t.available : t.unavailable}
+        </span>
+      </div>
+      {agents.filter(a => a.installed && !a.supported).map(a =>
+        <div className="agent-line secondary" key={a.name}><span>{a.name}</span><span>{t.pending}</span></div>)}
+    </section>
+
+    <section className="section">
+      <label className="field"><span>{t.senders}</span>
+        <textarea rows={2} value={settings.allowlist.join("\n")}
+          placeholder={t.sendersPlaceholder}
+          onChange={e => patch({ allowlist: e.target.value.split(/[\n,]/).map(x => x.trim().toLowerCase()).filter(Boolean) })} />
+      </label>
+    </section>
+
+    <div className="switch-line">
+      <span>{t.enabled}</span>
+      <input aria-label={t.enabled} type="checkbox" checked={settings.enabled}
+        onChange={e => patch({ enabled: e.target.checked })} />
     </div>
-    {advanced&&<section className="editor">
-      <Field label="Mailbox poll interval (seconds)" type="number" value={String(settings.poll_seconds)}
-        onChange={v=>patch({poll_seconds:Number(v)})}/>
-      <Field label="Progress email schedule (minutes, comma-separated)" value={settings.progress_minutes.join(", ")}
-        onChange={v=>patch({progress_minutes:v.split(",").map(x=>Number(x.trim())).filter(x=>Number.isFinite(x)&&x>0)})}/>
-      <label className="switch-row"><span>Enable workspace-write mode</span><input type="checkbox" checked={settings.workspace_write}
-        onChange={e=>patch({workspace_write:e.target.checked})}/></label>
-      <p className="hint">Write mode requires an EMA-Code line in every inbound email. Treat incoming mail as untrusted; do not expose high-risk actions without additional controls.</p>
-      <Field label="Write-mode access code (OS Keychain)" value={secrets.access} type="password"
-        onChange={v=>setSecrets({...secrets,access:v})} placeholder="Enter a strong unique code"/>
-      <button className="primary full" disabled={busy} onClick={save}>Save advanced settings</button>
+
+    <button className="advanced-trigger" onClick={() => setAdvanced(!advanced)}>
+      <Settings2 size={14} /> {t.advanced} <ChevronDown size={14} className={advanced ? "rotate" : ""} />
+    </button>
+    {advanced && <section className="advanced-content">
+      <label className="field"><span>{t.command}</span>
+        <input value={settings.codex_command} onChange={e => patch({ codex_command: e.target.value })} /></label>
+      <label className="field"><span>{t.poll}</span>
+        <input type="number" value={settings.poll_seconds}
+          onChange={e => patch({ poll_seconds: Number(e.target.value) })} /></label>
     </section>}
-    {notice&&<p className="notice">{notice}</p>}
-    <footer>No New App. Just Email.</footer>
+    <button className="save" disabled={saving} onClick={save}>{saving ? t.saving : t.save}</button>
+    {notice && <div className="notice" role="status">{notice}</div>}
+    <div className="footer">
+      <span>{t.memory}</span>
+      <span>{t.active} {stats?.running_jobs ?? 0} · {t.queue} {stats?.pending_jobs ?? 0}</span>
+    </div>
   </main>;
-}
-function ConfigRow({icon,label,value,onClick}:{icon:ReactNode;label:string;value:string;onClick:()=>void}){
-  return <button className="config-row" onClick={onClick}><span className="left">{icon}<span>{label}</span></span>
-    <span className="right"><span>{value}</span><ChevronDown size={15}/></span></button>;
-}
-function Field({label,value,onChange,placeholder,type="text"}:{
-  label:string;value:string;onChange:(v:string)=>void;placeholder?:string;type?:string
-}){
-  return <label className="field"><span>{label}</span><input type={type} value={value}
-    onChange={e=>onChange(e.target.value)} placeholder={placeholder}/></label>;
 }
