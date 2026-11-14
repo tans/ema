@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: desktop-release-ema
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -65,7 +65,7 @@ jobs:
               assert os.environ["GH_REF_NAME"] == tag, "Tag and manifest version differ"
           else:
               assert os.environ["GH_REF_NAME"] == "main", "Manual/bootstrap releases must use main"
-              assert tag == "v0.1.2", "Branch-triggered release expects v0.1.2"
+              assert tag == "v0.1.3", "Branch-triggered release expects v0.1.3"
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
               f.write(f"tag={tag}\n")
           print("Valid release", tag)
@@ -102,9 +102,9 @@ jobs:
             echo "Existing draft release will receive build assets"
           else
             cat > /tmp/release-notes.md <<'NOTES'
-          # EMA v0.1.2 — Alpha preview
+          # EMA v0.1.3 — Alpha preview
 
-          **No New App. Just Email.** A local-first Rust/Tauri email gateway with minimal bilingual settings, QQ Mail authorization-code preset, and Codex native session context.
+          **No New App. Just Email.** A local-first Rust/Tauri email gateway with neon blue-and-green branding, compact bilingual settings, QQ Mail authorization-code preset, and Codex native sessions.
 
           **Experimental and not production-safe:** Real mailbox/Codex integration,
           sender-authentication safeguards, approval flows and platform installation
@@ -204,8 +204,8 @@ jobs:
           tagName: ${{ needs.validate.outputs.tag }}
           releaseName: "EMA ${{ needs.validate.outputs.tag }} (Alpha)"
           releaseBody: |
-            # EMA v0.1.2 — Public Alpha preview
-            Local-first email gateway for Codex (Rust + Tauri 2).
+            # EMA v0.1.3 — Public Alpha preview
+            Local-first email gateway for Codex (Rust + Tauri 2). This Alpha refreshes EMA's neon blue-and-green brand mark, native app icons, and compact desktop configuration UI.
             **Experimental, not production-safe**: only use a controlled test
             mailbox and non-sensitive, read-only local context.
             Sender authentication, action approvals, live QQ mail/Agent validation,
