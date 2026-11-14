@@ -334,3 +334,48 @@ textarea:focus-visible, select:focus-visible {
   .primary-button { padding: 10px 9px; }
   .metric { padding: 9px; }
 }
+
+/* EMA neon brand v2 — small accents, not a neon background. */
+:root {
+  --ema-blue: #0866ff;
+  --ema-green: #2be84b;
+  --ema-ink: #172943;
+}
+body {
+  background:
+    radial-gradient(ellipse 185px 115px at 5% 8%, #0866ff0d, transparent 85%),
+    radial-gradient(ellipse 175px 145px at 95% 92%, #2be84b10, transparent 85%),
+    #f7f9fc;
+}
+.app { border-color: #dbe7f5; box-shadow: 0 12px 34px #0754b60d; }
+.brand-icon { width: 40px; height: 40px; filter: drop-shadow(0 3px 6px #0866ff12); }
+.brand-title strong { color: #142a48; }
+.brand-accent { background: linear-gradient(90deg, #edf5ff, #f1f8f8); }
+.brand-accent span {
+  background: linear-gradient(90deg, var(--ema-blue), #14b8ff 58%, var(--ema-green));
+  width: 32%;
+}
+.state.online { background: #edfff2; border: 1px solid #c7f6d3; }
+.state.online i { background: #20d941; box-shadow: 0 0 0 3px #20d9411d; }
+.guide-progress-item.current .progress-number {
+  color: #085ee5; background: #eff6ff; border-color: #b8d4ff;
+}
+.guide-progress-item.current .progress-number:has(svg) {
+  background: #ecfff0; color: #13a93d; border-color: #aef2be;
+}
+.choice button.selected { border-color: #c4ddff; color: #0959df; }
+.primary-button, .save {
+  background: linear-gradient(110deg, #1987ff 0%, #075af6 100%);
+  box-shadow: 0 4px 12px #0866ff22;
+}
+.primary-button:hover:not(:disabled), .save:hover:not(:disabled) { filter: brightness(1.04); }
+.section:focus-within { border-color: #d1e1ff; }
+.status-card.live {
+  border-color: #b8eacd;
+  background: linear-gradient(115deg, #f6fbff 0%, #f7fffa 100%);
+}
+.status-card.live .status-heading h1 { color: #196947; }
+.live .status-indicator { background: #26de48; box-shadow: 0 0 0 5px #26de481f; }
+.metric.prominent { background: linear-gradient(150deg, #f0f6ff, #fafffc); }
+.metric.prominent strong { color: #075cf0; }
+.switch-line { background: linear-gradient(110deg, #f0f6ff, #f6fff8); }
