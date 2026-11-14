@@ -171,10 +171,11 @@ impl Database {
         let mut st=c.prepare("SELECT id,message_id,recipient,subject,in_reply_to,refs,body,attempts
             FROM outbox WHERE state='queued' AND next_attempt <= strftime('%s','now')
             ORDER BY rowid LIMIT 20")?;
-        Ok(st.query_map([],|r| Ok(Outbound {id:r.get(0)?,message_id:r.get(1)?,
+        let rows=st.query_map([],|r| Ok(Outbound {id:r.get(0)?,message_id:r.get(1)?,
             recipient:r.get(2)?,subject:r.get(3)?,in_reply_to:r.get(4)?,
-            references:r.get(5)?,body:r.get(6)?,attempts:r.get(7)?}))?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            references:r.get(5)?,body:r.get(6)?,attempts:r.get(7)?}))?;
+        let outgoing=rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(outgoing)
     }
     pub fn outbox_result(&self,id:&str,success:bool,attempts:i64)->Result<()> {
         if success {

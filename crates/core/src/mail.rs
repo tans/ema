@@ -57,7 +57,7 @@ pub fn receive(c:&MailSettings,pass:&str)->Result<Vec<Incoming>> {
     uids.sort_unstable();
     let mut result=Vec::new();
     for uid in uids.into_iter().take(30) {
-        for msg in session.uid_fetch(uid.to_string(),"RFC822")?.iter() {
+        for msg in session.uid_fetch(uid.to_string(),"BODY.PEEK[]")?.iter() {
             if let Some(raw)=msg.body() {
                 match parse(uid,raw) {
                     Ok(v)=>result.push(v),

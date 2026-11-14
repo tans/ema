@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Activity, ChevronDown, CircleCheck, Folder, Mail, Plus, Settings2, ShieldCheck, Terminal, Trash2 } from "lucide-react";
 
 type Project={alias:string;path:string};
@@ -150,7 +151,7 @@ export default function App(){
     <footer>No New App. Just Email.</footer>
   </main>;
 }
-function ConfigRow({icon,label,value,onClick}:{icon:React.ReactNode;label:string;value:string;onClick:()=>void}){
+function ConfigRow({icon,label,value,onClick}:{icon:ReactNode;label:string;value:string;onClick:()=>void}){
   return <button className="config-row" onClick={onClick}><span className="left">{icon}<span>{label}</span></span>
     <span className="right"><span>{value}</span><ChevronDown size={15}/></span></button>;
 }

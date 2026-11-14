@@ -72,7 +72,7 @@ impl Settings {
             bail!("poll_seconds must be between 15 and 3600");
         }
         if self.codex_command.trim().is_empty() { bail!("Codex executable is required"); }
-        if self.allowlist.iter().any(|v| !v.contains('@') || v.contains(['\r','\n'])) {
+        if self.allowlist.iter().any(|v| !v.contains('@') || (v.contains('\r') || v.contains('\n'))) {
             bail!("allowlist must contain valid email addresses");
         }
         let mut aliases = std::collections::HashSet::new();

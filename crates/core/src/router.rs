@@ -35,7 +35,9 @@ pub async fn route(c:&Settings,subject:&str,body:&str)->Result<Decision> {
     let v:serde_json::Value=reply.json().await?;
     let content=v.pointer("/choices/0/message/content").and_then(|v|v.as_str())
         .context("router returned no content")?;
-    let normalized=content.trim().trim_matches(char::from(96)).trim_start_matches("json").trim();
+    let cleaned=content.trim();
+    let normalized=cleaned.strip_prefix("```json").or_else(||cleaned.strip_prefix("```"))
+        .unwrap_or(cleaned).trim_end_matches("```").trim();
     let d:Decision=serde_json::from_str(normalized).context("router returned invalid JSON")?;
     if d.agent!="codex" || !projects.contains(&d.project) {bail!("unauthorized routing decision");}
     if d.task.trim().is_empty() || d.task.len()>30_000 {bail!("invalid task");}

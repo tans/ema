@@ -12,6 +12,8 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     if let Some(existing) = &session.agent_session {
         cmd.arg("resume").arg(existing);
     }
+    // Avoid leaking credential environment fallbacks to an untrusted child process.
+    for key in ["EMA_MAIL_PASSWORD", "EMA_ROUTER_API_KEY", "EMA_MAIL_ACCESS_CODE"] { cmd.env_remove(key); }
     cmd.arg("-").current_dir(&cwd).stdin(Stdio::piped())
         .stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().context("failed to start Codex CLI")?;
