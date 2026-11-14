@@ -100,11 +100,11 @@ pub fn acknowledge(c:&MailSettings,pass:&str,uids:&[u32])->Result<()> {
 pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     let from:Mailbox=c.address.parse()?;
     let to:Mailbox=o.recipient.parse()?;
-    let msg=Message::builder().from(from).to(to).subject(&o.subject)
-        .message_id(Some(o.message_id.clone()))
-        .in_reply_to(o.in_reply_to.clone())
-        .references(o.references.clone())
-        .body(o.body.clone())?;
+    let mut builder=Message::builder().from(from).to(to).subject(&o.subject)
+        .message_id(Some(o.message_id.clone()));
+    if !o.in_reply_to.is_empty() { builder=builder.in_reply_to(o.in_reply_to.clone()); }
+    if !o.references.is_empty() { builder=builder.references(o.references.clone()); }
+    let msg=builder.body(o.body.clone())?;
     let builder = if c.smtp_port == 587 {
         SmtpTransport::starttls_relay(&c.smtp_host)?
     } else {
