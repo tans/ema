@@ -169,6 +169,19 @@ jobs:
         with:
           tagName: ${{ needs.validate.outputs.tag }}
           releaseName: "EMA ${{ needs.validate.outputs.tag }} (Alpha)"
+          releaseBody: |
+            # EMA v0.1.0 — Public Alpha preview
+            Local-first email gateway for Codex (Rust + Tauri 2).
+            **Experimental, not production-safe**: only use a controlled test
+            mailbox and non-sensitive, read-only project directories.
+            Sender authentication, action approvals, live mail/Agent validation,
+            and auto-updates are not yet complete.
+
+            macOS: ad-hoc signed, NOT Apple notarized (first-run approval may be required).
+            Windows: unsigned, SmartScreen may warn. Linux: unsigned.
+            [中文安装说明](https://github.com/tans/ema/blob/main/docs/INSTALL.zh-CN.md)
+            [发布与已知限制](https://github.com/tans/ema/blob/main/docs/RELEASING.md)
+            Download SHA256SUMS to check asset integrity.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
