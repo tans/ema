@@ -115,3 +115,21 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     transport.send(&msg)?;
     Ok(())
 }
+
+/// Send a harmless SMTP-only connectivity email. No agent prefix or secrets in its contents.
+pub fn send_connection_test(c: &MailSettings, pass: &str, recipient: &str) -> Result<()> {
+    let from: Mailbox = c.address.parse()?;
+    let to: Mailbox = recipient.parse()?;
+    let message = Message::builder().from(from).to(to)
+        .subject("EMA email connection test")
+        .body("This is a connection test from EMA. No agent task was created.\n".to_string())?;
+    let builder = if c.smtp_port == 587 {
+        SmtpTransport::starttls_relay(&c.smtp_host)?
+    } else {
+        SmtpTransport::relay(&c.smtp_host)?
+    };
+    let transport = builder.port(c.smtp_port)
+        .credentials(Credentials::new(c.username.clone(), pass.into())).build();
+    transport.send(&message)?;
+    Ok(())
+}

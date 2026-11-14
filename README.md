@@ -2,7 +2,7 @@
 
 **No New App. Just Email.**
 
-EMA is a local Rust/Tauri email gateway for an installed **Codex CLI**. Send a message whose subject begins with an enabled Agent prefix from an allowed mailbox; EMA creates a native agent session and sends a result by email. Reply to the same thread to continue that agent session. The desktop UI is a small configuration panel, not a chat client.
+EMA is a local Rust/Tauri email gateway for an installed **Codex CLI**. Send a message whose subject begins with an enabled Agent prefix from an allowed mailbox; EMA creates a native agent session and sends a result by email. Reply to the same thread to continue that agent session. The desktop UI has a compact status overview, an optional first-run setup wizard, and settings—not a chat client.
 
 > Experimental Alpha. EMA can run local programs and currently does not independently authenticate email origin or provide comprehensive action approvals. Use a dedicated test mailbox and keep the Agent read-only. Do not connect sensitive workstations or repositories to untrusted email.
 
@@ -21,13 +21,17 @@ npm run tauri build
 
 The app stays resident in the tray when its configuration window closes.
 
-## First-time setup
+## First-time setup and status dashboard
 
-1. Select your language in the top-right corner: **中文 / English**.
-2. Choose **QQ Mail** or **Other IMAP/SMTP**, then enter the mailbox address and its **authorization code / app password**.
-3. Optionally click **Test connection** (tests IMAP authentication without reading mail).
-4. Check **Codex** appears as available. Claude Code and OpenCode can be detected, but their execution adapters are not implemented yet.
-5. Add at least one **Allowed sender**, configure the subject prefixes (default runnable prefix: `codex`), enable the gateway and save. The mailbox password is stored in your OS credential store, not SQLite.
+On a fresh installation, EMA displays a three-step **optional** onboarding guide:
+
+1. **Connect email** — QQ Mail authorization code or another IMAP/SMTP mailbox; the connection check verifies IMAP login without changing message read status.
+2. **Sender allowlist** — add trusted sender addresses, one per line.
+3. **Send test email** — send a real SMTP connectivity message to a saved allowlist address. SMTP acceptance does not guarantee delivery, nor does it verify inbound Agent processing.
+
+Every step and the whole guide can be skipped. Skipping setup never automatically enables the gateway. Once onboarding is completed, the **home screen shows only gateway enabled state and session/job statistics** (total sessions, running, queued, completed, failed and last activity). Use the top-right **Settings** button to manage mailbox credentials, sender allowlist, per-Agent subject prefixes, enable/disable, language, and advanced options. Settings also provides **Open setup guide**.
+
+For new setups the guide can enable EMA after verified IMAP login, a saved allowlist, a successful SMTP test and a detected Codex runner. Existing configured users are not forced through onboarding after upgrading. The onboarding completion flag is stored in `config.json`; credentials continue to live in the OS credential store.
 
 ### QQ 邮箱授权码
 

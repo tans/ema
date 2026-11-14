@@ -68,6 +68,25 @@ async fn check_mail(settings: Settings, password: Option<String>) -> Result<(), 
         .await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
+/// SMTP test uses saved mailbox settings, not caller-provided destination policy.
+#[tauri::command]
+async fn send_test_mail(state: tauri::State<'_, Arc<Gateway>>, recipient: String) -> Result<(), String> {
+    let cfg = state.settings();
+    let address = recipient.trim().to_ascii_lowercase();
+    if address.is_empty() || address.contains('\r') || address.contains('\n')
+        || !cfg.is_allowed(&address) {
+        return Err("Test recipient must be in the saved sender allowlist".into());
+    }
+    if cfg.mail.address.trim().is_empty() { return Err("Configure mailbox first".into()); }
+    let mut check = cfg.clone();
+    check.enabled = false;
+    check.validate().map_err(|e| e.to_string())?;
+    let password = secret("mail").map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || mail::send_connection_test(&cfg.mail, &password, &address))
+        .await.map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn agent_status(state: tauri::State<'_, Arc<Gateway>>) -> AgentStatus {
     let command=state.settings().codex_command;
@@ -106,7 +125,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_settings,save_settings,set_secret,get_stats,agent_status,detect_agents,check_mail
+            get_settings,save_settings,set_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail
         ])
         .on_window_event(|window,event| {
             if let WindowEvent::CloseRequested{api,..}=event {
