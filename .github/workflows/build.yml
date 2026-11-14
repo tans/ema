@@ -42,3 +42,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
           grep -q 'Signature=adhoc' /tmp/ema-codesign.log
+      - name: Upload DMG for pre-release smoke testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: ema-macos-adhoc-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
