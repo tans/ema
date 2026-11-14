@@ -39,12 +39,35 @@ pub struct Project {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentRoute {
+    pub agent: String,
+    pub prefix: String,
+    pub enabled: bool,
+}
+pub fn default_routes() -> Vec<AgentRoute> {
+    vec![
+    AgentRoute { agent: "codex".into(), prefix: "codex".into(), enabled: true },
+    AgentRoute { agent: "cc".into(), prefix: "cc".into(), enabled: false },
+    AgentRoute { agent: "opencode".into(), prefix: "opencode".into(), enabled: false },
+    AgentRoute { agent: "pi".into(), prefix: "pi".into(), enabled: false },
+    AgentRoute { agent: "omp".into(), prefix: "omp".into(), enabled: false },
+    AgentRoute { agent: "zcode".into(), prefix: "zcode".into(), enabled: false },
+    AgentRoute { agent: "kimi".into(), prefix: "kimi".into(), enabled: false },
+    AgentRoute { agent: "dsh".into(), prefix: "dsh".into(), enabled: false },
+    AgentRoute { agent: "hermes".into(), prefix: "hermes".into(), enabled: false },
+    AgentRoute { agent: "openclaw".into(), prefix: "openclaw".into(), enabled: false },
+    AgentRoute { agent: "gemini".into(), prefix: "gemini".into(), enabled: false }
+    ]
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub language: String,
     pub mail: MailSettings,
     pub router: RouterSettings,
     pub allowlist: Vec<String>,
+    pub agent_routes: Vec<AgentRoute>,
     pub projects: Vec<Project>,
     pub codex_command: String,
     pub workspace_write: bool,
@@ -56,7 +79,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             language: "zh-CN".into(), mail: MailSettings::default(), router: RouterSettings::default(),
-            allowlist: Vec::new(), projects: Vec::new(), codex_command: "codex".into(),
+            allowlist: Vec::new(), agent_routes: default_routes(), projects: Vec::new(), codex_command: "codex".into(),
             workspace_write: false, poll_seconds: 30, progress_minutes: vec![10, 30, 60],
             enabled: false,
         }
@@ -83,6 +106,19 @@ impl Settings {
         if self.codex_command.trim().is_empty() { bail!("Codex executable is required"); }
         if self.allowlist.iter().any(|v| !v.contains('@') || (v.contains('\r') || v.contains('\n'))) {
             bail!("allowlist must contain valid email addresses");
+        }
+        let mut prefixes = std::collections::HashSet::new();
+        let mut agents = std::collections::HashSet::new();
+        for route in &self.agent_routes {
+            let prefix = route.prefix.trim().to_ascii_lowercase();
+            if route.agent.is_empty() || !["codex","cc","opencode","pi","omp","zcode","kimi","dsh","hermes","openclaw","gemini"].contains(&route.agent.as_str()) {
+                bail!("unsupported agent route");
+            }
+            if prefix.is_empty() || route.prefix != route.prefix.trim() || prefix.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                bail!("agent prefix must be a non-empty single token");
+            }
+            if !prefixes.insert(prefix) || !agents.insert(route.agent.as_str()) { bail!("duplicate agent or prefix"); }
+            if route.enabled && route.agent != "codex" { bail!("execution adapter unavailable for {}", route.agent); }
         }
         let mut aliases = std::collections::HashSet::new();
         for p in &self.projects {

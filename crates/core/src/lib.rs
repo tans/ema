@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod mail;
 pub mod router;
+pub mod workspace;
 
 use anyhow::Result;
 use config::Settings;
@@ -51,19 +52,19 @@ impl Gateway {
         let password = config::secret("mail")?;
         let mail_config = config.mail.clone();
         let pass = password.clone();
-        let incoming = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass)).await??;
-        let mut done = Vec::new();
+        let (last,validity) = self.database.cursor(&mail_config.address)?;
+        let (incoming, fetched_watermark, current_validity) = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass, last, validity)).await??;
+        let mut watermark = if validity == current_validity { last } else { 0 };
+        let mut failed=false;
         for msg in incoming {
-            let uid = msg.uid;
+            let uid=msg.uid;
             match self.on_message(&config, msg).await {
-                Ok(()) => done.push(uid),
-                Err(error) => tracing::warn!(uid, "mail processing retry: {error:#}"),
+                Ok(()) => { watermark=uid; self.database.set_cursor(&config.mail.address, watermark, current_validity)?; },
+                Err(error) => { tracing::warn!(uid, "mail processing retry: {error:#}"); failed=true; break; },
             }
         }
-        if !done.is_empty() {
-            tokio::task::spawn_blocking(move ||
-                mail::acknowledge(&config.mail, &password, &done)).await??;
-        }
+        // Cursor consumes ignored malformed messages too, but never skips a failed task.
+        if !failed { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
         Ok(())
     }
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<()> {
@@ -96,21 +97,42 @@ impl Gateway {
                 return Ok(());
             }
         }
-        let (agent, project, prompt) = if let Some(ref session) = previous {
-            (session.agent.clone(), session.project.clone(), body)
+        let (agent,project,prompt) = if let Some(ref session)=previous {
+            (session.agent.clone(),session.project.clone(),body.clone())
         } else {
-            if !agent::is_available(&cfg.codex_command).await {
-                anyhow::bail!("Codex CLI unavailable; install and authenticate Codex before creating a session");
-            }
-            let decision = router::route(cfg, &incoming.subject, &body).await?;
-            (decision.agent, decision.project, decision.task)
+            let Some(decision)=router::route(cfg,&incoming.subject,&body) else { return Ok(()); };
+            (decision.agent,decision.project,decision.task)
         };
-        let stored = self.database.store_inbound(
-            &incoming.message_id, &incoming.sender, previous.as_ref(), &agent,
-            &project, &incoming.subject, &prompt)?;
-        if let Some(id) = stored {
-            self.database.queue_reply(&id, &cfg.mail.address,
-                &format!("Task queued.\nAgent: {agent}\n\nReply to this email to continue the session."))?;
+        if agent != "codex" {
+            tracing::warn!(agent, "agent execution adapter unavailable");
+            return Ok(());
+        }
+        if !agent::is_available(&cfg.codex_command).await {
+            anyhow::bail!("Codex CLI unavailable; install and authenticate Codex");
+        }
+        let resolution=if let Some(ref session)=previous {
+            if let Some(ref cwd)=session.cwd {
+                workspace::Resolution::Found(cwd.clone())
+            } else if session.project != "_agent_memory" {
+                workspace::Resolution::Found(cfg.project(&session.project)?.to_string_lossy().into_owned())
+            } else { workspace::resolve(&self.dir,&self.database,cfg,&incoming.subject,&body,&session.id)? }
+        } else { workspace::resolve(&self.dir,&self.database,cfg,&incoming.subject,&body,&incoming.message_id)? };
+        let cwd=match &resolution { workspace::Resolution::Found(path)=>Some(path.as_str()), workspace::Resolution::Clarify=>None };
+        let original = if let Some(ref session)=previous { self.database.pending_prompt(&session.id)? } else { None };
+        let prompt = if let Some(ref initial)=original {
+            format!("{initial}\n\nDirectory clarification from sender:\n{prompt}")
+        } else { prompt };
+        if let (Some(session),Some(path))=(previous.as_ref(),cwd) {
+            self.database.update_cwd(&session.id,path)?;
+            self.database.resolve_pending(&session.id)?;
+        }
+        let enqueue=cwd.is_some();
+        let stored=self.database.store_inbound(&incoming.message_id,&incoming.sender,previous.as_ref(),&agent,
+            &project,&incoming.subject,&prompt,cwd,enqueue)?;
+        if let Some(id)=stored {
+            let text=if enqueue {format!("Task queued.\nAgent: {agent}\n\nReply to continue this session.")}
+                else { "Which local project directory should this task use? Reply with a known project name; no task has started.".to_string() };
+            self.database.queue_reply(&id,&cfg.mail.address,&text)?;
         }
         Ok(())
     }

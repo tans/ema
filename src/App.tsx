@@ -10,11 +10,12 @@ type Mail = {
 type Settings = {
   language: string; mail: Mail;
   router: { base_url: string; model: string };
-  allowlist: string[]; projects: { alias: string; path: string }[];
+  agent_routes: AgentRoute[]; allowlist: string[]; projects: { alias: string; path: string }[];
   codex_command: string; workspace_write: boolean;
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean;
 };
+type AgentRoute = { agent: string; prefix: string; enabled: boolean };
 type Agent = { name: string; installed: boolean; supported: boolean };
 type Stats = { pending_jobs: number; running_jobs: number; received_messages: number };
 const initial: Settings = {
@@ -22,6 +23,7 @@ const initial: Settings = {
   mail: { provider: "qq", address: "", username: "", imap_host: "imap.qq.com",
     imap_port: 993, smtp_host: "smtp.qq.com", smtp_port: 465 },
   router: { base_url: "https://api.openai.com/v1", model: "" },
+  agent_routes: [{agent:"codex",prefix:"codex",enabled:true},{agent:"cc",prefix:"cc",enabled:false},{agent:"opencode",prefix:"opencode",enabled:false},{agent:"pi",prefix:"pi",enabled:false},{agent:"omp",prefix:"omp",enabled:false},{agent:"zcode",prefix:"zcode",enabled:false},{agent:"kimi",prefix:"kimi",enabled:false},{agent:"dsh",prefix:"dsh",enabled:false},{agent:"hermes",prefix:"hermes",enabled:false},{agent:"openclaw",prefix:"openclaw",enabled:false},{agent:"gemini",prefix:"gemini",enabled:false}],
   allowlist: [], projects: [], codex_command: "codex",
   workspace_write: false, poll_seconds: 30, progress_minutes: [10, 30, 60],
   enabled: false,
@@ -40,7 +42,7 @@ const translations = {
     saved:"已保存", active:"运行中", queue:"排队中",
     imap:"IMAP 服务器", smtp:"SMTP 服务器", port:"端口",
     error:"操作失败", credentials:"请输入邮箱地址和授权码", unsafe:"请至少填写一个允许的发件人",
-    memory:"项目由 Agent 上下文识别 · 默认只读"
+    memory:"自动识别执行目录 · 默认只读", routes:"邮件主题前缀", notSupported:"其他 Agent 尚无执行适配器"
   },
   en: {
     running:"Enabled", paused:"Disabled", email:"Email", qq:"QQ Mail", other:"Other IMAP/SMTP",
@@ -55,7 +57,7 @@ const translations = {
     saved:"Saved", active:"Running", queue:"Queued",
     imap:"IMAP host", smtp:"SMTP host", port:"Port",
     error:"Operation failed", credentials:"Enter an email address and authorization code", unsafe:"Add at least one allowed sender",
-    memory:"Agent chooses context from native memory · read-only"
+    memory:"Automatic session directory · read-only", routes:"Email subject prefixes", notSupported:"Other agent runners are not yet available"
   }
 };
 const qqMail = (address: string): Mail => ({
@@ -131,7 +133,7 @@ export default function App() {
     finally { setTesting(false); }
   }
   const selected = settings.mail.provider === "qq" ? "qq" : "custom";
-  const available = agents.find(a => a.name === "Codex");
+  const available = agents.find(a => a.name === "codex");
   return <main className="app">
     <header className="header">
       <div className="brand"><span className="brand-icon"><Mail size={18} /></span><strong>Email Agent</strong></div>
@@ -192,8 +194,19 @@ export default function App() {
           {available?.installed ? <CircleCheck size={14}/> : null}{available?.installed ? t.available : t.unavailable}
         </span>
       </div>
-      {agents.filter(a => a.installed && !a.supported).map(a =>
-        <div className="agent-line secondary" key={a.name}><span>{a.name}</span><span>{t.pending}</span></div>)}
+      <div className="routes-heading">{t.routes}</div>
+      <div className="routes">
+        {(settings.agent_routes ?? initial.agent_routes).map((r, index) => {
+          const status=agents.find(a=>a.name===r.agent);
+          return <div className="route-row" key={r.agent}>
+            <span className="route-name">{r.agent}</span>
+            <input aria-label={r.agent+" prefix"} value={r.prefix} onChange={e=>patch({agent_routes:(settings.agent_routes ?? initial.agent_routes).map((x,i)=>i===index?{...x,prefix:e.target.value}:x)})}/>
+            <input aria-label={r.agent+" enabled"} type="checkbox" checked={r.enabled} disabled={!status?.installed || !status.supported}
+              onChange={e=>patch({agent_routes:(settings.agent_routes ?? initial.agent_routes).map((x,i)=>i===index?{...x,enabled:e.target.checked}:x)})}/>
+          </div>;
+        })}
+      </div>
+      <small className="routes-note">{t.notSupported}</small>
     </section>
 
     <section className="section">

@@ -63,3 +63,11 @@ button { cursor: pointer; }
   word-break: break-word; font-size: 11px; }
 .footer { margin-top: 15px; align-items: start; gap: 12px; color: #adb5c0; font-size: 10px; }
 .footer span:first-child { max-width: 60%; }
+
+.routes-heading {margin:14px 0 7px; font-size:11px; color:#6f7b8b;}
+.routes {display:grid; gap:5px;}
+.route-row {display:grid; grid-template-columns:1fr 115px 22px; gap:10px; align-items:center;}
+.route-name {font-size:12px;}
+.route-row input:not([type="checkbox"]) {min-width:0; padding:6px 8px; border:1px solid #dee3eb; border-radius:6px;}
+.route-row input[type="checkbox"] {width:15px;height:15px;accent-color:#5268bd;}
+.routes-note {display:block;color:#9aa4b2;margin-top:7px;font-size:10px;}

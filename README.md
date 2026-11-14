@@ -2,7 +2,7 @@
 
 **No New App. Just Email.**
 
-EMA is a local Rust/Tauri email gateway for an installed **Codex CLI**. Send a message from an allowed mailbox; EMA creates a native agent session and sends a result by email. Reply to the same thread to continue that agent session. The desktop UI is a small configuration panel, not a chat client.
+EMA is a local Rust/Tauri email gateway for an installed **Codex CLI**. Send a message whose subject begins with an enabled Agent prefix from an allowed mailbox; EMA creates a native agent session and sends a result by email. Reply to the same thread to continue that agent session. The desktop UI is a small configuration panel, not a chat client.
 
 > Experimental Alpha. EMA can run local programs and currently does not independently authenticate email origin or provide comprehensive action approvals. Use a dedicated test mailbox and keep the Agent read-only. Do not connect sensitive workstations or repositories to untrusted email.
 
@@ -27,7 +27,7 @@ The app stays resident in the tray when its configuration window closes.
 2. Choose **QQ Mail** or **Other IMAP/SMTP**, then enter the mailbox address and its **authorization code / app password**.
 3. Optionally click **Test connection** (tests IMAP authentication without reading mail).
 4. Check **Codex** appears as available. Claude Code and OpenCode can be detected, but their execution adapters are not implemented yet.
-5. Add at least one **Allowed sender** (a separate email address), enable the gateway and save. The mailbox password is stored in your OS credential store, not SQLite.
+5. Add at least one **Allowed sender**, configure the subject prefixes (default runnable prefix: `codex`), enable the gateway and save. The mailbox password is stored in your OS credential store, not SQLite.
 
 ### QQ 邮箱授权码
 
@@ -61,7 +61,7 @@ Existing `projects` entries in old `config.json` remain readable for backwards c
 ```text
 From: owner@example.com
 To: agent@qq.com
-Subject: Review the project
+Subject: codex Review the project
 
 Review the repository we discussed earlier and summarize its current state.
 ```
@@ -100,3 +100,11 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 [Public Alpha releases](https://github.com/tans/ema/releases) · [中文安装指南](docs/INSTALL.zh-CN.md) · [Release 构建说明](docs/RELEASING.md)
 
 macOS binaries are ad-hoc signed, not Apple notarized. Windows binaries lack a paid publisher signature. Installation may require OS-specific trust prompts. Build success is not production-security acceptance.
+
+## Daily mailbox routing and working directories (v0.1.2)
+
+Use your normal email account. New tasks must come from an approved sender and start with an exact plain-text prefix followed by a space. For example: `codex Review mfggo project`. Available default prefix names are `codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`. These are editable per Agent in the desktop configuration panel. Only Codex currently has an execution adapter; the others remain disabled even if their binaries are detected. Replies to an EMA session resume by In-Reply-To / References, without a prefix.
+
+EMA uses an IMAP UID cursor rather than unseen message flags. On first connection it starts with *future* messages (old inbox messages are not executed); regular messages are not marked read by EMA. If a session's work directory matches a known local project (prior session paths, configured legacy paths, or common developer folders like `~/code` and `~/projects`) it is pinned as `cwd` in SQLite. When a project directory cannot be identified unambiguously EMA sends a clarification email and does not run the Agent. Non-project tasks use isolated directories under EMA's application data `sessions/`. Paths in email or native Agent memory do not grant write permission, and new memory-first sessions remain read-only.
+
+**Security:** the sender allowlist verifies only the parsed From address, **not** the sender's cryptographic identity. This Alpha is unsafe for untrusted email and sensitive local data. Keep workspace-write off until a separate authenticated approval mechanism is available.
