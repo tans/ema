@@ -61,7 +61,7 @@ jobs:
               assert os.environ["GH_REF_NAME"] == tag, "Tag and manifest version differ"
           else:
               assert os.environ["GH_REF_NAME"] == "main", "Manual/bootstrap releases must use main"
-              assert tag == "v0.1.0" or os.environ.get("GH_REF_TYPE") == "branch", "Unexpected ref"
+              assert tag == "v0.1.0", "Branch bootstrap only supports v0.1.0; future releases require a version tag"
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
               f.write(f"tag={tag}\n")
           print("Valid release", tag)
