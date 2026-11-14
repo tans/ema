@@ -66,7 +66,7 @@ const labels = {
     running: "已启用", paused: "未启用",
     runningDesc: "正在监控符合白名单与主题前缀规则的新邮件",
     pausedDesc: "邮件 Agent 已暂停，不会执行新任务",
-    sessions: "总会话", active: "执行中", queued: "排队中",
+    overviewStats: "会话统计", sessions: "总会话", active: "执行中", queued: "排队中",
     completed: "已完成", failed: "失败 / 中断", received: "任务邮件",
     lastActivity: "最近活动", none: "暂无活动",
     mailboxConfig: "邮箱连接", agent: "本地 Agent",
@@ -104,7 +104,7 @@ const labels = {
     running: "Enabled", paused: "Disabled",
     runningDesc: "Monitoring new emails with allowed senders and agent prefixes",
     pausedDesc: "The email Agent is paused and will not run tasks",
-    sessions: "Sessions", active: "Running", queued: "Queued",
+    overviewStats: "Session statistics", sessions: "Sessions", active: "Running", queued: "Queued",
     completed: "Completed", failed: "Failed / interrupted", received: "Task emails",
     lastActivity: "Last activity", none: "No activity yet",
     mailboxConfig: "Email connection", agent: "Local Agents",
@@ -384,7 +384,7 @@ export default function App() {
         <p>{settings.enabled ? t.runningDesc : t.pausedDesc}</p>
       </div>
       <section className="dashboard-section">
-        <div className="section-heading"><h2>{t.sessions}</h2></div>
+        <div className="section-heading"><h2>{t.overviewStats}</h2></div>
         <div className="metric-grid">
           {metrics.map(metric => <div className={"metric " + (metric.prominent ? "prominent" : "")} key={metric.label}>
             <span>{metric.label}</span><strong>{metric.value}</strong>
