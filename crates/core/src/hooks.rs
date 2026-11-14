@@ -53,6 +53,9 @@ fn install_shim(root: &Path) -> Result<PathBuf> {
     private_dir(&dir)?;
     private_dir(&dir.join("inbox"))?;
     let shim=dir.join("emit.sh");
+    if shim.exists() && !fs::read_to_string(&shim)?.contains("EMA-MANAGED-HOOK") {
+        anyhow::bail!("refusing to take over an existing non-EMA hook executable");
+    }
     let template=r###"#!/bin/sh
 # EMA-MANAGED-HOOK: local spool; no SMTP credentials, no remote network.
 ACTIVE=__ACTIVE__
