@@ -73,7 +73,7 @@ async fn check_mail(settings: Settings, password: Option<String>) -> Result<(), 
 async fn send_test_mail(state: tauri::State<'_, Arc<Gateway>>, recipient: String) -> Result<(), String> {
     let cfg = state.settings();
     let address = recipient.trim().to_ascii_lowercase();
-    if address.is_empty() || address.contains(['\\r','\\n'])
+    if address.is_empty() || address.contains('\r') || address.contains('\n')
         || !cfg.is_allowed(&address) {
         return Err("Test recipient must be in the saved sender allowlist".into());
     }
