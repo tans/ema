@@ -161,6 +161,7 @@ export const EmaReport = async ({ directory }) => ({
     const props = event.properties ?? event.data ?? {};
     const payload = JSON.stringify({
       type: "session.idle", session_id: props.sessionID ?? props.sessionId ?? "",
+      event_id: event.id ?? event.created ?? Date.now(),
       cwd: directory ?? "", response: ""
     });
     try {
@@ -189,7 +190,7 @@ export default function (pi) {
       .map(x => x.text).join("\n").slice(0, 2000);
     const payload = JSON.stringify({
       type: "agent_end", session_id: ctx.sessionManager?.getSessionFile?.() ?? "",
-      cwd: ctx.cwd ?? "", response
+      event_id: Date.now(), cwd: ctx.cwd ?? "", response
     });
     try {
       const p = spawn(script, ["pi"], { stdio: ["pipe", "ignore", "ignore"] });
@@ -266,6 +267,14 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
             if session.is_empty()||!db.is_ema_agent_session(agent,&session)? {
                 let mut hash=Sha256::new();
                 hash.update(agent.as_bytes());hash.update(&bytes);
+                // Native turn IDs are stable; providers without IDs use a minute
+                // window to avoid suppressing identical legitimate future turns.
+                if v.get("turn-id").is_none() && v.get("event_id").is_none()
+                    && v.get("timestamp").is_none() {
+                    let modified=fs::metadata(&path)?.modified()?
+                        .duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                    hash.update((modified / 60).to_le_bytes());
+                }
                 let id=format!("{:x}",hash.finalize());
                 db.queue_hook_report(&id,cfg.mail.address.trim(),&subject,&body)?;
             }
