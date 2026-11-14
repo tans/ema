@@ -55,16 +55,16 @@ impl Gateway {
         let (last,validity) = self.database.cursor(&mail_config.address)?;
         let (incoming, fetched_watermark, current_validity) = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass, last, validity)).await??;
         let mut watermark = if validity == current_validity { last } else { 0 };
-        let incoming_count_is_zero=incoming.is_empty();
+        let mut failed=false;
         for msg in incoming {
             let uid=msg.uid;
             match self.on_message(&config, msg).await {
                 Ok(()) => { watermark=uid; self.database.set_cursor(&config.mail.address, watermark, current_validity)?; },
-                Err(error) => { tracing::warn!(uid, "mail processing retry: {error:#}"); break; },
+                Err(error) => { tracing::warn!(uid, "mail processing retry: {error:#}"); failed=true; break; },
             }
         }
-        // UID cursor never modifies user read/unread state.
-        if validity != current_validity || incoming_count_is_zero { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
+        // Cursor consumes ignored malformed messages too, but never skips a failed task.
+        if !failed { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
         Ok(())
     }
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<()> {
