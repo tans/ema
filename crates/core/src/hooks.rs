@@ -34,7 +34,7 @@ pub(crate) fn atomic_write(p: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 #[cfg(unix)]
-fn shell_quote(s: &str) -> String { format!("'{}'",s.replace('\'',"'\\''")) }
+pub(crate) fn shell_quote(s: &str) -> String { format!("'{}'",s.replace('\'',"'\\''")) }
 #[cfg(unix)]
 pub(crate) fn owned_file(path: &Path, content: &str) -> Result<()> {
     if path.exists() {
