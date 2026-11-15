@@ -82,6 +82,7 @@ impl Database {
         if !columns.iter().any(|name| name == "cwd") { c.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", [])?; }
         c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_events (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS routing_replies (incoming_mid TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
         ")?;
         let mut outbox_stmt=c.prepare("PRAGMA table_info(outbox)")?;
         let outbox_cols=outbox_stmt.query_map([], |r|r.get::<_,String>(1))?
@@ -189,6 +190,25 @@ impl Database {
         self.lock()?.execute("UPDATE jobs SET state=?1,completed_at=strftime('%s','now'),result=?2
             WHERE id=?3", params![if ok {"completed"} else {"failed"},result,job_id])?;
         Ok(())
+    }
+    /// Record one failure receipt per incoming Message-ID, even across IMAP retries.
+    /// No Agent session is created for unknown/missing execution adapters.
+    pub fn queue_route_error(&self, mid:&str, recipient:&str, mailbox:&str,
+        subject:&str, error:&str) -> Result<bool> {
+        let mut c=self.lock()?;
+        let tx=c.transaction()?;
+        let added=tx.execute(
+            "INSERT OR IGNORE INTO routing_replies(incoming_mid,created_at) VALUES(?1,strftime('%s','now'))",
+            [mid])?;
+        if added == 0 {tx.rollback()?;return Ok(false);}
+        let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
+        let reply_mid=format!("<ema-error-{}@{}>",Uuid::new_v4(),domain);
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,'task')",
+            params![Uuid::new_v4().to_string(),reply_mid,recipient,
+                format!("Re: {}",subject),mid,mid,error])?;
+        tx.commit()?;
+        Ok(true)
     }
     pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str) -> Result<()> {
         let mut c = self.lock()?;
