@@ -112,7 +112,7 @@ export default {
       const payload = JSON.stringify({
         type: "agent_end",
         session_id: ctx?.sessionKey ?? ctx?.sessionId ?? "",
-        event_id: ctx?.runId ?? event?.runId ?? Date.now(),
+        event_id: ctx?.runId ?? event?.runId ?? "",
         completed: !!event?.success,
         failed: event?.success === false,
         response: result.slice(0, 2000)
