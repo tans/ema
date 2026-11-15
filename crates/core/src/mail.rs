@@ -35,10 +35,15 @@ fn plaintext(part: &ParsedMail<'_>) -> Result<String> {
     }
     Ok(String::new())
 }
-fn html(part: &ParsedMail<'_>) -> Result<String> {
-    if part.ctype.mimetype.eq_ignore_ascii_case("text/html") { return Ok(part.get_body()?); }
+fn archive_text(part: &ParsedMail<'_>, mimetype: &str) -> Result<String> {
+    let disposition = part.get_content_disposition();
+    if disposition.disposition == mailparse::DispositionType::Attachment
+        || disposition.params.contains_key("filename") || part.ctype.params.contains_key("name") {
+        return Ok(String::new());
+    }
+    if part.ctype.mimetype.eq_ignore_ascii_case(mimetype) { return Ok(part.get_body()?); }
     for sub in &part.subparts {
-        if let Ok(text) = html(sub) { if !text.is_empty() { return Ok(text); } }
+        if let Ok(text) = archive_text(sub, mimetype) { if !text.is_empty() { return Ok(text); } }
     }
     Ok(String::new())
 }
@@ -68,9 +73,9 @@ fn archive(uid: u32, raw: &[u8]) -> FetchedMail {
     if raw.len() > 16 * 1024 * 1024 {
         record.archive_note = "too_large".into();
     } else if let Ok(parsed) = mailparse::parse_mail(raw) {
-        let plain = plaintext(&parsed).unwrap_or_default();
+        let plain = archive_text(&parsed, "text/plain").unwrap_or_default();
         let is_html = plain.is_empty();
-        let text = if is_html { html(&parsed).unwrap_or_default() } else { plain };
+        let text = if is_html { archive_text(&parsed, "text/html").unwrap_or_default() } else { plain };
         let redacted = redact_access_codes(&text);
         let mut chars = redacted.chars();
         record.body = chars.by_ref().take(200_000).collect();
