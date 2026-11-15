@@ -1,0 +1,71 @@
+name: One-time merged branch cleanup
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/cleanup-merged-branches.yml"]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete only verified merged PR heads
+        env:
+          GH_TOKEN: ${{ github.token }
+          GH_REPO: ${{ github.repository }
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          deleted=0
+          while IFS='|' read -r branch expected_sha pr; do
+            test -n "$branch" || continue
+            if [[ "$branch" == "main" ]]; then
+              echo "::error::Main must never be deleted"
+              failed=1
+              continue
+            fi
+            current="$(gh api "repos/$GH_REPO/git/ref/heads/$branch" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ -z "$current" ]]; then
+              echo "ALREADY ABSENT: $branch"
+              continue
+            fi
+            if [[ "$current" != "$expected_sha" ]]; then
+              echo "::error::Branch $branch changed after inspection; not deleting"
+              failed=1
+              continue
+            fi
+            verified="$(gh api "repos/$GH_REPO/pulls/$pr" \
+              --jq "(.merged_at != null) and (.base.ref == \"main\") and (.head.ref == \"$branch\") and (.head.repo.full_name == \"$GH_REPO\") and (.head.sha == \"$expected_sha\")")"
+            if [[ "$verified" != "true" ]]; then
+              echo "::error::PR #$pr does not prove branch $branch is fully merged"
+              failed=1
+              continue
+            fi
+            open_count="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --jq "[.[] | select(.head.ref == \"$branch\" and .head.repo.full_name == \"$GH_REPO\")] | length")"
+            if [[ "$open_count" != "0" ]]; then
+              echo "::error::Branch $branch is used by an open PR"
+              failed=1
+              continue
+            fi
+            gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$branch" >/dev/null
+            echo "DELETED: $branch (#$pr)"
+            deleted=$((deleted + 1))
+          done <<'MERGED_PR_HEADS'
+chore/free-alpha-release|536d7cfdf0362f844fdd7a32f9a243a5e7a0fffe|3
+ci/publish-alpha-v0.1.0|62a6da7fdad08ff5443a8fa56f7e8cbfb2a385a3|4
+feat/issue-1-email-agent-gateway|c26524e6c0daf3778b3f955babbd063cb0023f22|2
+feat/issue-7-mail-routing-cwd|b33cdbc17e4034e4771e79ee86362aae78e72621|8
+feat/issue-11-onboarding-status-dashboard|8db5775ea4aa5f9152a362c5bdb89844a8460991|12
+feat/issue-13-release-matrix|1aca24e5034111d5c8b7a365b54375ca765734e2|14
+feat/issue-17-auto-hooks-reports|4809ece646e6c2cd64cfe56aba85eed96cfbf664|18
+feat/neon-blue-green-brand-ui|d4c46f4e811a97058d1fb13979716c57e237721a|10
+feat/neon-brand-refresh-ema|6629e2c12de5afa8d3a1bd170bf672ce8e1a8554|16
+feat/simple-multilingual-qq-memory|0b54c04a00918c51360ed3cb98587728e28da768|6
+MERGED_PR_HEADS
+          echo "Deleted $deleted verified merged branches"
+          test "$failed" -eq 0
