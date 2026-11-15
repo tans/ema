@@ -28,7 +28,7 @@ type Stats = {
 };
 type View = "welcome" | "dashboard" | "settings";
 type Step = 1 | 2 | 3;
-type SettingsTab = "mail" | "allowlist" | "agents" | "general";
+type SettingsTab = "mail" | "allowlist" | "agents";
 
 const agentNames = ["codex", "cc", "opencode", "pi", "omp", "zcode", "kimi", "dsh", "hermes", "openclaw", "gemini"];
 const qqMail = (address: string): MailSettings => ({
@@ -74,8 +74,8 @@ const labels = {
     mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时默认汇报到当前邮箱。汇报可能包含 Agent 最终回答摘要。",
     unavailable: "未检测到", available: "可用",
     routes: "邮件主题前缀", notSupported: "全部前缀默认生效。当前支持 Codex、Claude Code、Gemini 执行，其他 Agent 会自动邮件回复不支持的原因。",
-    enabled: "启用邮件 Agent", advanced: "高级设置", command: "Codex 命令",
-    poll: "收信间隔（秒）", save: "保存设置", saving: "保存中…",
+    enabled: "启用邮件 Agent",
+    save: "保存设置", saving: "保存中…",
     saved: "设置已保存", error: "操作失败",
     missingEmail: "请先填写邮箱地址和授权码并验证连接",
     missingAllow: "请添加至少一个白名单邮箱，或跳过此步",
@@ -113,8 +113,8 @@ const labels = {
     mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails a short result to this mailbox while running. Summaries may contain sensitive output.",
     unavailable: "Not found", available: "Available",
     routes: "Subject prefixes", notSupported: "All prefixes are active. Codex, Claude Code and Gemini run; other agents receive an explanatory email.",
-    enabled: "Enable email Agent", advanced: "Advanced", command: "Codex executable",
-    poll: "Poll interval (seconds)", save: "Save settings", saving: "Saving…",
+    enabled: "Enable email Agent",
+    save: "Save settings", saving: "Saving…",
     saved: "Settings saved", error: "Action failed",
     missingEmail: "Enter your mailbox and validate the connection",
     missingAllow: "Add at least one allowed sender or skip this step",
@@ -138,7 +138,7 @@ export default function App() {
   const [secret, setSecret] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
   const [routesOpen, setRoutesOpen] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
@@ -408,8 +408,7 @@ export default function App() {
     const tabs: { id: SettingsTab; label: string; icon: typeof Mail }[] = [
       { id: "mail", label: t.mailboxConfig, icon: Mail },
       { id: "allowlist", label: t.senders, icon: ShieldCheck },
-      { id: "agents", label: t.agent, icon: Activity },
-      { id: "general", label: t.advanced, icon: Settings2 }
+      { id: "agents", label: t.agent, icon: Activity }
     ];
     const activeTab = tabs.find(tab => tab.id === settingsTab)!;
     return <div className="settings-page">
@@ -452,35 +451,7 @@ export default function App() {
             </div>}
             <p className="field-hint">{t.notSupported}</p>
           </section>}
-          {settingsTab === "general" && <>
-            <section className="section">
-              <h2>{t.enabled}</h2>
-              <div className="switch-line"><span>{t.enabled}</span>
-                <input type="checkbox" role="switch" checked={settings.enabled}
-                  aria-label={t.enabled} onChange={e => patch({enabled:e.target.checked})}/>
-              </div>
-              <p className="field-hint">{t.enabledHint}</p>
-            </section>
-            <section className="section">
-              <h2>{t.language}</h2>
-              <select className="language" aria-label={t.language} value={language}
-                onChange={e => patch({language:e.target.value})}>
-                <option value="zh-CN">简体中文</option><option value="en">English</option>
-              </select>
-              <button className="advanced-trigger" type="button" onClick={() => setAdvanced(!advanced)}>
-                <Settings2 size={15}/>{t.advanced}
-                <ChevronDown size={15} className={advanced ? "rotate" : ""}/>
-              </button>
-              {advanced && <div className="advanced-content">
-                <label className="field"><span>{t.command}</span>
-                  <input value={settings.codex_command}
-                    onChange={e => patch({codex_command:e.target.value})}/></label>
-                <label className="field"><span>{t.poll}</span>
-                  <input type="number" min={15} max={3600} value={settings.poll_seconds}
-                    onChange={e => patch({poll_seconds:Number(e.target.value)})}/></label>
-              </div>}
-            </section>
-          </>}
+
           <div className="settings-footer">
             {notice && <div className="notice" role="status">{notice}</div>}
             <button className="primary-button" type="button" disabled={saving}

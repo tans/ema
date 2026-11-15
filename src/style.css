@@ -161,13 +161,7 @@ textarea:focus-visible, select:focus-visible {
   color: #263b5a; font-weight: 630;
 }
 .switch-line input { width: 17px; height: 17px; accent-color: #17cc4a; cursor: pointer; }
-.advanced-trigger {
-  display: flex; align-items: center; gap: 7px;
-  width: 100%; border: 0; padding: 13px 4px 11px; background: none;
-  color: #8795a7; font-size: 11px; text-align: left;
-}
-.advanced-trigger svg:last-child { margin-left: auto; transition: transform .14s; }
-.advanced-content { background: #fafcff; border: 1px solid var(--ema-border); border-radius: 8px; padding: 12px; margin-bottom: 9px; }
+
 .save {
   display: block; width: 100%; padding: 11px 12px; border: 0;
   border-radius: 9px; color: white; font-weight: 660; font-size: 12px;
