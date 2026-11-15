@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde_json::{json, Value as Json};
 use std::{fs, path::{Path, PathBuf}};
-use crate::hooks::{atomic_write, backup_once, owned_file};
+use crate::hooks::{atomic_write, backup_once, owned_file, shell_quote};
 
 fn yaml_key(value:&str)->serde_yaml::Value { serde_yaml::Value::String(value.into()) }
 
@@ -59,21 +59,21 @@ def register(ctx):
         }
     };
     let Some(root_map)=doc.as_mapping_mut() else{return Ok(());};
-    if !root_map.contains_key(yaml_key("plugins")){
+    if !root_map.contains_key(&yaml_key("plugins")){
         root_map.insert(yaml_key("plugins"),serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     }
-    let Some(plugins)=root_map.get_mut(yaml_key("plugins")).and_then(serde_yaml::Value::as_mapping_mut)
+    let Some(plugins)=root_map.get_mut(&yaml_key("plugins")).and_then(serde_yaml::Value::as_mapping_mut)
         else{return Ok(());};
-    let off=plugins.get(yaml_key("disabled")).and_then(serde_yaml::Value::as_sequence)
+    let off=plugins.get(&yaml_key("disabled")).and_then(serde_yaml::Value::as_sequence)
         .map(|arr|arr.iter().any(|v|v.as_str()==Some("ema-report"))).unwrap_or(false);
     if off{
         tracing::warn!("Hermes plugin explicitly disabled; respecting user's choice");
         return Ok(());
     }
-    if !plugins.contains_key(yaml_key("enabled")){
+    if !plugins.contains_key(&yaml_key("enabled")){
         plugins.insert(yaml_key("enabled"),serde_yaml::Value::Sequence(Vec::new()));
     }
-    let Some(enabled)=plugins.get_mut(yaml_key("enabled")).and_then(serde_yaml::Value::as_sequence_mut)
+    let Some(enabled)=plugins.get_mut(&yaml_key("enabled")).and_then(serde_yaml::Value::as_sequence_mut)
         else{return Ok(());};
     if enabled.iter().any(|v|v.as_str()==Some("ema-report")){return Ok(());}
     enabled.push(yaml_key("ema-report"));
