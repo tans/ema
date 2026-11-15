@@ -379,3 +379,5 @@ body {
 .metric.prominent { background: linear-gradient(150deg, #f0f6ff, #fafffc); }
 .metric.prominent strong { color: #075cf0; }
 .switch-line { background: linear-gradient(110deg, #f0f6ff, #f6fff8); }
+
+.route-row {grid-template-columns:minmax(0,1fr) minmax(100px,160px);}
