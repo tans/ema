@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "icons": "tauri icon public/ema-logo.svg"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
