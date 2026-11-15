@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod mail;
 pub mod hooks;
+pub mod cli;
 pub mod router;
 pub mod workspace;
 
@@ -122,12 +123,25 @@ impl Gateway {
             let Some(decision)=router::route(cfg,&incoming.subject,&body) else { return Ok(()); };
             (decision.agent,decision.project,decision.task)
         };
-        if agent != "codex" {
-            tracing::warn!(agent, "agent execution adapter unavailable");
+        // Every configured prefix is routable. Never silently drop an unavailable
+        // adapter: queue a single human-readable error in the original email thread.
+        if !cli::runner_supported(&agent) {
+            self.database.queue_route_error(
+                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+                &format!("EMA could not start {agent}: this Agent does not yet have an email execution adapter. No task was executed."))?;
             return Ok(());
         }
-        if !agent::is_available(&cfg.codex_command).await {
-            anyhow::bail!("Codex CLI unavailable; install and authenticate Codex");
+        let Some(executable)=cli::resolve(&agent,cfg) else {
+            self.database.queue_route_error(
+                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+                &format!("EMA could not start {agent}: the Agent CLI was not found on this machine. Install it and retry; no task was executed."))?;
+            return Ok(());
+        };
+        if !agent::is_available(&executable.to_string_lossy()).await {
+            self.database.queue_route_error(
+                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+                &format!("EMA could not start {agent}: the CLI cannot run its version check. Verify installation and retry; no task was executed."))?;
+            return Ok(());
         }
         let resolution=if let Some(ref session)=previous {
             if let Some(ref cwd)=session.cwd {
