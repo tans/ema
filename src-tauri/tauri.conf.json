@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run icons && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "Email Agent",
-        "width": 460,
-        "height": 630,
-        "minWidth": 420,
-        "minHeight": 530,
+        "width": 800,
+        "height": 680,
+        "minWidth": 440,
+        "minHeight": 540,
         "resizable": true,
         "center": true
       }
