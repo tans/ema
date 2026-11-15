@@ -355,7 +355,7 @@ export default function App() {
         {step === 1 && <button className="primary-button" disabled={saving || testing} onClick={() => { void nextEmail(); }}>{t.next}<ArrowRight size={15}/></button>}
         {step === 2 && <button className="primary-button" disabled={saving} onClick={() => { void nextAllowlist(); }}>{t.allowSave}<ArrowRight size={15}/></button>}
         {step === 3 && <button className="primary-button" disabled={saving} onClick={() => {void finishGuide(testSent);}}>
-          {testSent && connectionOk && agentAvailable ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
+          {testSent && connectionOk ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
       </div>
     </section>;
   }
