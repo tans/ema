@@ -22,6 +22,7 @@ type Settings = {
 };
 type Stats = {
   total_sessions: number; pending_jobs: number; running_jobs: number;
+  hook_reports: number; hook_sent: number; hook_pending: number;
   completed_jobs: number; failed_jobs: number; received_messages: number;
   last_activity: number | null;
 };
@@ -67,6 +68,7 @@ const labels = {
     pausedDesc: "邮件任务已暂停；本机 Agent 完成后仍会自动邮件汇报",
     overviewStats: "会话统计", sessions: "总会话", active: "执行中", queued: "排队中",
     completed: "已完成", failed: "失败 / 中断", received: "任务邮件",
+    hookHeading: "本机会话汇报", hooksCaptured: "已捕获", hooksSent: "已发送", hooksWaiting: "待发送",
     lastActivity: "最近活动", none: "暂无活动",
     mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时默认汇报到当前邮箱。汇报可能包含 Agent 最终回答摘要。",
     unavailable: "未检测到", available: "可用",
@@ -105,6 +107,7 @@ const labels = {
     pausedDesc: "Inbound tasks are paused; local Agent completion reports remain automatic",
     overviewStats: "Session statistics", sessions: "Sessions", active: "Running", queued: "Queued",
     completed: "Completed", failed: "Failed / interrupted", received: "Task emails",
+    hookHeading: "Local Agent reports", hooksCaptured: "Captured", hooksSent: "Sent", hooksWaiting: "Pending",
     lastActivity: "Last activity", none: "No activity yet",
     mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails a short result to this mailbox while running. Summaries may contain sensitive output.",
     unavailable: "Not found", available: "Available",
@@ -379,6 +382,18 @@ export default function App() {
         <div className="section-heading"><h2>{t.overviewStats}</h2></div>
         <div className="metric-grid">
           {metrics.map(metric => <div className={"metric " + (metric.prominent ? "prominent" : "")} key={metric.label}>
+            <span>{metric.label}</span><strong>{metric.value}</strong>
+          </div>)}
+        </div>
+      </section>
+      <section className="dashboard-section">
+        <div className="section-heading"><h2>{t.hookHeading}</h2></div>
+        <div className="metric-grid">
+          {[
+            {label:t.hooksCaptured,value:stats?.hook_reports ?? 0},
+            {label:t.hooksSent,value:stats?.hook_sent ?? 0},
+            {label:t.hooksWaiting,value:stats?.hook_pending ?? 0}
+          ].map(metric => <div className="metric" key={metric.label}>
             <span>{metric.label}</span><strong>{metric.value}</strong>
           </div>)}
         </div>
