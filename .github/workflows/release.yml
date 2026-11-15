@@ -33,11 +33,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Confirm commit belongs to main
+      # A stale run can get HTTP 403 when GitHub refuses a release target whose
+      # .github/workflows tree no longer matches the current default branch.
+      # Re-run on the latest main commit instead of rewriting an old release tag.
+      - name: Confirm release source is latest main
         run: |
+          set -euo pipefail
           git fetch origin main
-          git merge-base --is-ancestor HEAD origin/main || {
-            echo "::error::Only main commits may be released"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || {
+            echo "::error::Release source is stale. Run this workflow on the latest main."
             exit 1
           }
       - name: Check manifest versions and release ref
@@ -112,47 +116,50 @@ jobs:
           RELEASE_SCOPE: ${{ needs.validate.outputs.scope }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+          # Never point a new release at a stale commit. The built-in GITHUB_TOKEN
+          # may be forbidden from creating/updating tags on a commit whose workflow
+          # files differ from the live default branch.
+          CURRENT_MAIN="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$GITHUB_SHA" != "$CURRENT_MAIN" ]]; then
+            echo "::error::main advanced after validation ($CURRENT_MAIN). Start a fresh release run."
+            exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            TAG_SHA="$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
+            if [[ "$TAG_SHA" != "$GITHUB_SHA" ]]; then
+              echo "::error::Existing tag $RELEASE_TAG points to another commit. Bump version instead of force-moving an existing tag."
+              exit 1
+            fi
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Existing draft release will receive build assets"
+            echo "Reusing draft for $RELEASE_TAG (same source SHA)"
           else
             cat > /tmp/release-notes.md <<NOTES
           # EMA ${RELEASE_TAG} — Alpha preview
 
           Packaging scope: ${RELEASE_SCOPE}. Patch versions ship only a macOS Apple Silicon (M-series) DMG. Versions ending in .0 ship the full macOS/Windows/Linux matrix.
 
-          **No New App. Just Email.** A local-first Rust/Tauri email gateway with neon blue-and-green branding, compact bilingual settings, QQ Mail authorization-code preset, and Codex native sessions.
+          **No New App. Just Email.** A local-first Rust/Tauri email gateway, with bilingual settings, QQ Mail authorization code and local Agent Hooks.
 
-          **Experimental and not production-safe:** Real mailbox/Codex integration,
-          sender-authentication safeguards, approval flows and platform installation
-          have not yet been fully verified. Use only a controlled test mailbox and
-          non-sensitive project context; keep workspace-write disabled.
+          **Experimental, not production-safe:** Email sender whitelist does not authenticate sender identity. Use a controlled test mailbox and non-sensitive project context; keep workspace-write disabled.
 
           - macOS: ad-hoc signed, **NOT** Apple Developer ID signed or notarized.
-            A one-time allow decision may be needed in System Settings > Privacy & Security.
-          - Windows: no Authenticode publisher signature; SmartScreen may warn.
-          - Linux: packages are unsigned.
+          - Windows: unsigned. Linux: unsigned.
           - Automatic updates are not enabled.
 
           See [Chinese installation guide](https://github.com/tans/ema/blob/main/docs/INSTALL.zh-CN.md)
           and [release documentation](https://github.com/tans/ema/blob/main/docs/RELEASING.md).
-          Verify downloads against the included SHA256SUMS before use.
+          Verify downloads against SHA256SUMS.
           NOTES
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA"               --draft --prerelease --title "EMA $RELEASE_TAG (Alpha)"               --notes-file /tmp/release-notes.md
+            # No --target or PATCH target_commitish. After the exact HEAD guard
+            # GitHub creates the tag on its default branch without a workflow-
+            # file cross-commit permission check.
+            gh release create "$RELEASE_TAG" --draft --prerelease \
+              --title "EMA $RELEASE_TAG (Alpha)" --notes-file /tmp/release-notes.md
           fi
-          # Draft releases may be rebuilt after fixes. Bind their tag and target
-          # to the exact source commit used for the new installer matrix.
-          # This is safe only while the release is unpublished.
           STATE="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
-          test "$STATE" = "true" || { echo "::error::Refusing to mutate a public tag"; exit 1; }
-          RELEASE_ID="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
-          gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -f target_commitish="$GITHUB_SHA" >/dev/null
-          if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            TAG_SHA="$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
-            if test "$TAG_SHA" != "$GITHUB_SHA"; then
-              gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$RELEASE_TAG" \
-                -f sha="$GITHUB_SHA" -F force=true >/dev/null
-            fi
-          fi
+          [[ "$STATE" == "true" ]] || { echo "::error::Refusing to mutate a public release"; exit 1; }
 
   bundle:
     name: Build ${{ matrix.name }}
@@ -285,6 +292,12 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
+          # A release must not publish an installer from an older main commit.
+          CURRENT_MAIN="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$CURRENT_MAIN" == "$GITHUB_SHA" ]] || {
+            echo "::error::main moved during packaging. Refusing to publish stale binaries."
+            exit 1
+          }
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
           gh release edit "$RELEASE_TAG" --draft=false --prerelease
           gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets             --jq '{url, isDraft, isPrerelease, files: [.assets[].name]}'
