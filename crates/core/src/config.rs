@@ -174,6 +174,13 @@ impl Settings {
     }
 }
 
+fn secrets_path() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").filter(|value| !value.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))
+        .context("home directory unavailable for credentials")?;
+    Ok(PathBuf::from(home).join(".ema").join("secrets.json"))
+}
+
 pub fn secret(name: &str) -> Result<String> {
     let env_name = match name {
         "mail" => "EMA_MAIL_PASSWORD", "llm" => "EMA_ROUTER_API_KEY",
@@ -182,12 +189,50 @@ pub fn secret(name: &str) -> Result<String> {
     if let Ok(value) = std::env::var(env_name) {
         if !value.is_empty() { return Ok(value); }
     }
-    Ok(keyring::Entry::new("tans.ema", name)?.get_password()?)
+    let path = secrets_path()?;
+    let data = fs::read(&path).context("no accessible saved credentials; enter the mailbox password in settings")?;
+    let values: std::collections::BTreeMap<String, String> = serde_json::from_slice(&data)?;
+    values.get(name).filter(|value| !value.is_empty()).cloned()
+        .ok_or_else(|| anyhow::anyhow!("secret '{}' not found", name))
 }
 
 pub fn save_secret(name: &str, value: &str) -> Result<()> {
     if !["mail", "llm", "access"].contains(&name) { bail!("unsupported secret"); }
     if value.trim().is_empty() { bail!("secret cannot be empty"); }
-    keyring::Entry::new("tans.ema", name)?.set_password(value)?;
-    Ok(())
+    let path = secrets_path()?;
+    let dir = path.parent().context("credentials directory unavailable")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir_all(dir)?;
+
+    let mut values: std::collections::BTreeMap<String, String> = match fs::read(&path) {
+        Ok(data) => serde_json::from_slice(&data)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(err) => return Err(err.into()),
+    };
+    values.insert(name.to_owned(), value.to_owned());
+    let data = serde_json::to_vec_pretty(&values)?;
+    let tmp = dir.join(format!(".secrets-{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
+    let result = (|| -> Result<()> {
+        use std::io::Write;
+        file.write_all(&data)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, &path)?;
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&tmp); }
+    result
 }

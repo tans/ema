@@ -8,7 +8,6 @@ description = "Email-native local agent runtime"
 anyhow = "1"
 chrono = "0.4"
 imap = "2.4"
-keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 lettre = "0.11"
 mailparse = "0.18"
 native-tls = "0.2"

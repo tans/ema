@@ -31,7 +31,9 @@ On a fresh installation, EMA displays a three-step **optional** onboarding guide
 
 Every step and the whole guide can be skipped. Skipping setup never automatically enables the gateway. Once onboarding is completed, the **home screen shows only gateway enabled state and session/job statistics** (total sessions, running, queued, completed, failed and last activity). Use the top-right **Settings** button to manage mailbox credentials, sender allowlist, per-Agent subject prefixes, enable/disable, language, and advanced options. Settings also provides **Open setup guide**.
 
-For new setups the guide can enable EMA after verified IMAP login, a saved allowlist, a successful SMTP test and a detected Codex runner. Existing configured users are not forced through onboarding after upgrading. The onboarding completion flag is stored in `config.json`; credentials continue to live in the OS credential store.
+For new setups the guide can enable EMA after verified IMAP login, a saved allowlist, a successful SMTP test and a detected Codex runner. Existing configured users are not forced through onboarding after upgrading. The onboarding completion flag is stored in `config.json`.
+
+EMA no longer reads the OS credential store. After upgrading, existing users need to re-enter the mailbox authorization code in **Settings → Email connection**; previously stored keychain entries are left untouched. Until then, email sending and receiving will not work. Credentials are stored as **plain text** in `~/.ema/secrets.json` (the `.ema` directory in the user profile on Windows). On macOS and Linux, newly saved files are readable and writable only by the current user (`0600`). Other processes running as that user can read the file.
 
 ### QQ 邮箱授权码
 
@@ -46,7 +48,7 @@ EMA 选择 **QQ 邮箱** 时自动配置：
 | SMTP server | `smtp.qq.com` |
 | SMTP port (TLS) | `465` |
 | Username | 完整邮箱地址，例如 `agent@qq.com` |
-| Password | QQ 邮箱授权码，存入系统 Keychain |
+| Password | QQ 邮箱授权码，明文存于用户目录的 `.ema/secrets.json` |
 
 QQ 官方说明：[如何生成授权码](https://help.mail.qq.com/detail/106/985)。
 
@@ -77,7 +79,7 @@ The installed CLI determines whether sufficient context exists to respond; if no
 - **Tauri 2 + React**: one compact language-aware configuration window, credential input, IMAP connection check and local Agent detection.
 - **Rust Core**: mailbox IMAP polling and SMTP, sender allowlist, Codex subprocess using JSONL events, native session resume, progress notifications and persistent outbox.
 - **SQLite**: sessions, jobs, messages, events, pending outbound emails.
-- **OS Keychain**: mail authorization code; never in settings files or logs.
+- **Local credential file**: mailbox authorization code is stored in `.ema/secrets.json` in the user directory; on macOS and Linux, newly saved files use owner-only permissions (`0600`).
 
 Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA_ROUTER_API_KEY` (legacy), and `EMA_MAIL_ACCESS_CODE` (legacy write-mode). Never commit them or pass them to Agent subprocesses.
 

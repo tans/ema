@@ -51,12 +51,13 @@ const labels = {
     language: "语言", skipAll: "跳过引导", skipStep: "跳过此步", back: "上一步",
     settings: "设置", home: "运行概览", history: "邮件记录", setup: "初始设置", step: "步骤",
     emailStep: "连接邮箱", allowStep: "设置白名单", testStep: "发送测试邮件",
-    emailDesc: "连接日常邮箱，授权码会安全保存在系统凭据中。",
+    emailDesc: "连接日常邮箱，授权码会以明文保存在本机用户目录。",
     allowDesc: "只有下列邮箱地址发来的任务才允许进入 Agent。",
     testDesc: "向白名单邮箱发送一封测试邮件，确认 SMTP 发信正常。",
     qq: "QQ 邮箱", other: "其他邮箱", email: "邮箱", address: "邮箱地址",
     login: "登录用户名", auth: "授权码", password: "应用密码",
     authPlaceholder: "输入 QQ 邮箱授权码", keepSecret: "留空则使用已保存的凭据",
+    secretStorage: "授权码以明文存于用户目录的 .ema/secrets.json；macOS 和 Linux 文件仅当前用户可读写。",
     imap: "IMAP 服务器", smtp: "SMTP 服务器", port: "端口",
     getCode: "获取授权码", checkConnection: "测试连接",
     checking: "正在验证…", connected: "IMAP 连接成功",
@@ -80,6 +81,7 @@ const labels = {
     save: "保存设置", saving: "保存中…",
     saved: "设置已保存", error: "操作失败",
     missingEmail: "请先填写邮箱地址和授权码并验证连接",
+    missingSecret: "未找到本地邮箱授权码，请在邮箱设置中填写；在此之前无法收发邮件。",
     missingAllow: "请添加至少一个白名单邮箱，或跳过此步",
     invalidReceiver: "请选择已保存的白名单收件人",
     reopenGuide: "重新打开引导", refresh: "刷新 Agent 检测",
@@ -90,12 +92,13 @@ const labels = {
     language: "Language", skipAll: "Skip setup", skipStep: "Skip this step", back: "Back",
     settings: "Settings", home: "Overview", history: "Mail history", setup: "Get started", step: "Step",
     emailStep: "Connect email", allowStep: "Sender allowlist", testStep: "Send a test email",
-    emailDesc: "Connect your everyday mailbox. Your app password stays in your OS keychain.",
+    emailDesc: "Connect your everyday mailbox. Your app password is stored as plain text in your local user directory.",
     allowDesc: "Only these email addresses may submit tasks to an Agent.",
     testDesc: "Send a real SMTP test email to an allowed address.",
     qq: "QQ Mail", other: "Other email", email: "Mailbox", address: "Email address",
     login: "Login username", auth: "Authorization code", password: "App password",
     authPlaceholder: "Enter QQ Mail authorization code", keepSecret: "Leave blank to use the stored credential",
+    secretStorage: "The password is stored as plain text in .ema/secrets.json in your user directory; on macOS and Linux the file is owner-only.",
     imap: "IMAP server", smtp: "SMTP server", port: "Port",
     getCode: "Get authorization code", checkConnection: "Test connection",
     checking: "Checking…", connected: "IMAP connection successful",
@@ -119,6 +122,7 @@ const labels = {
     save: "Save settings", saving: "Saving…",
     saved: "Settings saved", error: "Action failed",
     missingEmail: "Enter your mailbox and validate the connection",
+    missingSecret: "No local mailbox password was found. Enter it in email settings to resume sending and receiving mail.",
     missingAllow: "Add at least one allowed sender or skip this step",
     invalidReceiver: "Choose a saved allowlist recipient",
     reopenGuide: "Open setup guide", refresh: "Scan Agents",
@@ -138,6 +142,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("mail");
   const [loading, setLoading] = useState(true);
   const [secret, setSecret] = useState("");
+  const [needsMailSecret, setNeedsMailSecret] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [routesOpen, setRoutesOpen] = useState(false);
 
@@ -172,13 +177,14 @@ export default function App() {
     catch { /* Preserve previous metrics while disconnected. */ }
   }
   useEffect(() => {
-    invoke<Settings>("get_settings").then(value => {
+    invoke<Settings>("get_settings").then(async value => {
       const configured = value.mail.address || value.mail.imap_host;
       const resolved = { ...value, mail: configured ? value.mail : qqMail("") };
       setSettings(resolved);
       setTestRecipient(resolved.allowlist[0] ?? "");
       setAllowlistText(resolved.allowlist.join("\n"));
       setView(resolved.onboarding_completed ? "dashboard" : "welcome");
+      if (resolved.mail.address.trim()) setNeedsMailSecret(!(await invoke<boolean>("has_mail_secret")));
     }).catch(e => setNotice(String(e))).finally(() => setLoading(false));
     void refreshStats();
     const timer = setInterval(() => { void refreshStats(); }, 12000);
@@ -191,6 +197,7 @@ export default function App() {
     try {
       if (secret.trim()) await invoke("set_secret", { name: "mail", value: secret.trim() });
       await invoke("save_settings", { settings: next });
+      setNeedsMailSecret(!!next.mail.address.trim() && !(await invoke<boolean>("has_mail_secret")));
       setSettings(next);
       setSecret("");
       if (showSaved) setNotice(t.saved);
@@ -305,6 +312,7 @@ export default function App() {
         <input type="password" autoComplete="new-password" value={secret}
           placeholder={selected === "qq" ? t.authPlaceholder : t.keepSecret}
           onChange={e => { setSecret(e.target.value); setConnectionOk(false); }} /></label>
+      <p className="field-hint">{t.secretStorage}</p>
       <div className="inline-actions">
         {selected === "qq" && <a href="https://help.mail.qq.com/detail/106/985" target="_blank" rel="noreferrer">{t.getCode}</a>}
         <button type="button" className="link-button" disabled={testing}
@@ -377,6 +385,10 @@ export default function App() {
       { label: t.received, value: stats?.received_messages ?? 0 }
     ];
     return <div className="dashboard">
+      {needsMailSecret && <div className="alert notice" role="alert">
+        <span>{t.missingSecret}</span>{" "}
+        <button className="btn text-button" type="button" onClick={() => { setSettingsTab("mail"); setView("settings"); }}>{t.mailboxConfig}</button>
+      </div>}
       <div className={"status-card " + (settings.enabled ? "live" : "")}>
         <div className="status-card-top"><Activity size={17}/><span>{t.home}</span></div>
         <div className="status-heading"><span className="status-indicator"/><h1>{settings.enabled ? t.running : t.paused}</h1></div>
@@ -429,7 +441,9 @@ export default function App() {
         </nav>
         <div className="settings-main">
           {settingsTab === "mail" && <section className="section">
-            <h2>{t.mailboxConfig}</h2>{mailboxFields()}
+            <h2>{t.mailboxConfig}</h2>
+            {needsMailSecret && <div className="alert notice" role="alert">{t.missingSecret}</div>}
+            {mailboxFields()}
             <p className="field-hint">{t.hookNotice}</p>
           </section>}
           {settingsTab === "allowlist" && <section className="section">
