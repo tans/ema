@@ -196,8 +196,9 @@ pub(super) fn format(agent: &str, v: &Value, language: &str) -> Option<(String, 
         else if interrupted { "Interrupted" } else if failed { "Failed" } else { "Completed" };
     let session_title = single_line(&title, 100);
     let title = if session_title.is_empty() { single_line(&task, 100) } else { session_title.clone() };
-    let subject = if title.is_empty() { format!("EMA Report | {} | {state}", agent.to_ascii_uppercase()) }
-        else { format!("EMA Report | {} | {title}", agent.to_ascii_uppercase()) };
+    let report_label = if zh { "EMA 报告" } else { "EMA Report" };
+    let subject = if title.is_empty() { format!("{report_label} | {} | {state}", agent.to_ascii_uppercase()) }
+        else { format!("{report_label} | {} | {title}", agent.to_ascii_uppercase()) };
     let mut answer = excerpt(field(v, &["last-assistant-message", "last_assistant_message", "prompt_response", "response"]), 10000, zh);
     let mut task = excerpt(&task, 4000, zh);
     let truncated = if zh { "\n…（内容已截断）" } else { "\n… (truncated)" };
