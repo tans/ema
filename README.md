@@ -99,6 +99,16 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 4. Receive the result, reply to the same email and verify the original Codex session resumes.
 5. Close the window; verify the tray remains active and preferences persist.
 
+## Agent routing update (v0.1.7)
+
+All eleven default subject prefixes (`codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`) are always eligible for exact leading-token routing. The UI no longer offers per-Agent enable checkboxes or manual executable scans. Prefix text remains editable. Existing `agent_routes.enabled` fields are retained for backward compatibility but ignored by the router. An allowed sender's message using an unavailable or unsupported runner receives a **threaded, deduplicated error email** rather than being ignored. Ordinary mail still does not trigger an Agent.
+
+Email execution adapters now exist for **Codex**, **Claude Code (`cc`)** and **Gemini CLI (`gemini`)**. They use their installed global commands, with fallback resolution for common macOS GUI PATH locations. Codex retains its sandbox settings; Claude uses noninteractive JSON output in `plan` permission mode, Gemini uses JSON output with both `--sandbox` and `--approval-mode plan`. These two new adapters deliberately allow **read-only operations only**: execution errors, missing credentials, permission failures, and unavailable local sandbox dependencies are emailed back as task failures. Session IDs are retained when CLI JSON includes one. **All other routing prefixes are recognized but return an explicit adapter-unavailable error**; they are not secretly executed by Codex.
+
+Local Agent completion Hooks are now registered for **seven** agents: Codex, Claude Code, Gemini CLI, OpenCode, Pi, **Kimi Code** (`Stop` / `StopFailure` in its TOML config), and **OMP** (`agent_end` user-scope extension). Newly observed agents will sync on the next HookManager pass, without UI switches. The remaining Hook and CLI integrations are still to be verified; do not assume all eleven have native execution support.
+
+**Safety:** sender whitelist alone is not cryptographic authorization. Native Agent CLI `plan` flags and sandbox availability differ by installed version; use trusted test mailboxes and check local permissions before sending real instructions. The default report email is still the EMA mailbox itself. Hook reports are short and may include sensitive text, so evaluate local workflow privacy before deploying.
+
 ## Automatic local Agent completion reports (v0.1.6)
 
 **No separate Hook switches or SMTP settings.** As soon as EMA starts, its HookManager automatically installs/reconciles completion callbacks for locally configured **Codex, Claude Code, Gemini CLI, OpenCode and Pi**. Sessions started outside EMA (including Terminal and IDE sessions) send a short completion email **from and to the EMA mailbox address**. Email-triggered Codex sessions retain their existing single-threaded EMA reply, without duplicate Hook reports. This works even if inbound email-task polling is disabled.

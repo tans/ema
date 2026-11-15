@@ -60,7 +60,7 @@ fn install_shim(root: &Path) -> Result<PathBuf> {
 # EMA-MANAGED-HOOK: local spool; no SMTP credentials, no remote network.
 ACTIVE=__ACTIVE__
 SPOOL=__SPOOL__
-case "$1" in codex|claude|gemini|opencode|pi) ;; *) exit 0 ;; esac
+case "$1" in codex|claude|gemini|opencode|pi|omp|kimi) ;; *) exit 0 ;; esac
 [ -r "$ACTIVE" ] || exit 0
 LAST="$(cat "$ACTIVE" 2>/dev/null)"
 NOW="$(date +%s)"
@@ -203,6 +203,69 @@ export default function (pi) {
 "###.replace("__SCRIPT__",&serde_json::to_string(&shim.to_string_lossy().to_string())?);
     owned_file(&dir.join("extensions/ema-report.ts"),&js)
 }
+
+#[cfg(unix)]
+fn install_kimi(home:&Path,shim:&Path)->Result<()> {
+    // New Kimi Code installs use ~/.kimi-code; older kimi-cli uses ~/.kimi.
+    let dir=if home.join(".kimi-code").is_dir() {home.join(".kimi-code")}
+        else {home.join(".kimi")};
+    if !dir.is_dir(){return Ok(());}
+    let file=dir.join("config.toml");
+    let old=if file.exists(){fs::read_to_string(&file)?}else{String::new()};
+    let mut doc:toml_edit::DocumentMut=match old.parse(){
+        Ok(v)=>v,Err(e)=>{tracing::warn!("Kimi config invalid, preserving it: {e}");return Ok(());}
+    };
+    let command=format!("{} kimi",shell_quote(&shim.to_string_lossy()));
+    if doc.get("hooks").is_none(){
+        doc["hooks"]=toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
+    }
+    let Some(hooks)=doc.get_mut("hooks").and_then(toml_edit::Item::as_array_of_tables_mut)
+        else {tracing::warn!("Kimi hooks format differs; preserving original config");return Ok(());};
+    for event in ["Stop","StopFailure"]{
+        if hooks.iter().any(|t|t.get("event").and_then(|v|v.as_str())==Some(event)
+            && t.get("command").and_then(|v|v.as_str())==Some(command.as_str())){continue;}
+        let mut table=toml_edit::Table::new();
+        table["event"]=toml_edit::value(event);
+        table["command"]=toml_edit::value(command.as_str());
+        table["timeout"]=toml_edit::value(5);
+        hooks.push(table);
+    }
+    let updated=doc.to_string();
+    if updated!=old {backup_once(&file,old.as_bytes())?;atomic_write(&file,updated.as_bytes())?;}
+    Ok(())
+}
+
+#[cfg(unix)]
+fn install_omp(home:&Path,shim:&Path)->Result<()> {
+    // OMP loads user-scope factories from ~/.omp/agent/hooks/{pre,post}/*.ts.
+    let dir=home.join(".omp/agent");
+    if !dir.is_dir(){return Ok(());}
+    let js=r###"// EMA-MANAGED-HOOK: OMP user-level agent_end observer.
+import { spawn } from "node:child_process";
+const script = __SCRIPT__;
+export default function(pi) {
+  pi.on("agent_end", async (event, ctx) => {
+    if (event.willContinue || event.awaitingAsyncWork) return;
+    const last = (event.messages ?? []).filter(m => m.role === "assistant").at(-1);
+    const response = (last?.content ?? []).filter(x => x.type === "text")
+      .map(x => x.text).join("\n").slice(0, 2000);
+    const payload = JSON.stringify({
+      type: "agent_end", event_id: Date.now(),
+      session_id: ctx.sessionManager?.getSessionFile?.() ?? "",
+      cwd: ctx.cwd ?? "", response
+    });
+    try {
+      const p = spawn(script, ["omp"], { stdio: ["pipe","ignore","ignore"] });
+      p.on("error", () => {});
+      p.stdin.on("error", () => {});
+      p.stdin.end(payload);
+    } catch (_) {}
+  });
+}
+"###.replace("__SCRIPT__",&serde_json::to_string(&shim.to_string_lossy().to_string())?);
+    owned_file(&dir.join("hooks/post/ema-report.ts"),&js)
+}
+
 /// Idempotent. Existing unrelated agent settings are retained, Codex conflicts are skipped.
 pub fn install(root:&Path)->Result<()> {
     #[cfg(unix)] {
@@ -213,7 +276,9 @@ pub fn install(root:&Path)->Result<()> {
             ("claude",install_claude(&home,&shim)),
             ("gemini",install_gemini(&home,&shim)),
             ("opencode",install_opencode(&home,&shim)),
-            ("pi",install_pi(&home,&shim))
+            ("pi",install_pi(&home,&shim)),
+            ("kimi",install_kimi(&home,&shim)),
+            ("omp",install_omp(&home,&shim))
         ] {
             if let Err(err)=result {tracing::warn!(agent=name,"hook sync skipped: {err:#}");}
         }
@@ -232,15 +297,18 @@ fn format_report(agent:&str,v:&Value)->Option<(String,String,String)> {
     let typ=field(v,&["type","hook_event_name"]);
     if !matches!((agent,typ),
         ("codex","agent-turn-complete")|("claude","Stop")|("gemini","AfterAgent")
-        |("opencode","session.idle")|("pi","agent_end")){return None;}
+        |("opencode","session.idle")|("pi","agent_end")|("omp","agent_end")
+        |("kimi","Stop")|("kimi","StopFailure")){return None;}
     let native_session=field(v,&["thread-id","session_id","sessionID"]).to_owned();
     let cwd=field(v,&["cwd"]);
     let project=Path::new(cwd).file_name().and_then(|x|x.to_str()).unwrap_or("unknown");
     let answer=clean(field(v,&["last-assistant-message","last_assistant_message","prompt_response","response"]),2000);
-    let subject=format!("EMA Report | {} | Completed",agent.to_ascii_uppercase());
-    let body=format!("Agent: {agent}\nStatus: completed\nProject: {}\nSession: {}\n\nResult:\n{}\n\nLocal Agent hook report; this is not a new EMA task.",
+    let failed=agent=="kimi" && typ=="StopFailure";
+    let state=if failed {"failed"} else {"completed"};
+    let subject=format!("EMA Report | {} | {}",agent.to_ascii_uppercase(),if failed {"Failed"} else {"Completed"});
+    let body=format!("Agent: {agent}\nStatus: {state}\nProject: {}\nSession: {}\n\nResult:\n{}\n\nLocal Agent hook report; this is not a new EMA task.",
         clean(project,100),clean(&native_session,128),
-        if answer.is_empty(){"Completed; final response unavailable."}else{&answer});
+        if answer.is_empty(){if failed {"Task failed; error detail unavailable."}else{"Completed; final response unavailable."}}else{&answer});
     Some((native_session,subject,body))
 }
 fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
@@ -256,7 +324,7 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
         if len==0||len>MAX_EVENT{let _=fs::remove_file(&path);continue;}
         let name=entry.file_name().to_string_lossy().to_string();
         let agent=name.split('.').next().unwrap_or("");
-        if !["codex","claude","gemini","opencode","pi"].contains(&agent) {
+        if !["codex","claude","gemini","opencode","pi","omp","kimi"].contains(&agent) {
             let _=fs::remove_file(&path);continue;
         }
         let bytes=fs::read(&path)?;

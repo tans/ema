@@ -42,20 +42,22 @@ pub struct Project {
 pub struct AgentRoute {
     pub agent: String,
     pub prefix: String,
+    #[serde(default = "route_on")]
     pub enabled: bool,
 }
+fn route_on() -> bool { true }
 pub fn default_routes() -> Vec<AgentRoute> {
     vec![
     AgentRoute { agent: "codex".into(), prefix: "codex".into(), enabled: true },
-    AgentRoute { agent: "cc".into(), prefix: "cc".into(), enabled: false },
-    AgentRoute { agent: "opencode".into(), prefix: "opencode".into(), enabled: false },
-    AgentRoute { agent: "pi".into(), prefix: "pi".into(), enabled: false },
-    AgentRoute { agent: "omp".into(), prefix: "omp".into(), enabled: false },
-    AgentRoute { agent: "zcode".into(), prefix: "zcode".into(), enabled: false },
-    AgentRoute { agent: "kimi".into(), prefix: "kimi".into(), enabled: false },
-    AgentRoute { agent: "dsh".into(), prefix: "dsh".into(), enabled: false },
-    AgentRoute { agent: "hermes".into(), prefix: "hermes".into(), enabled: false },
-    AgentRoute { agent: "openclaw".into(), prefix: "openclaw".into(), enabled: false },
+    AgentRoute { agent: "cc".into(), prefix: "cc".into(), enabled: true },
+    AgentRoute { agent: "opencode".into(), prefix: "opencode".into(), enabled: true },
+    AgentRoute { agent: "pi".into(), prefix: "pi".into(), enabled: true },
+    AgentRoute { agent: "omp".into(), prefix: "omp".into(), enabled: true },
+    AgentRoute { agent: "zcode".into(), prefix: "zcode".into(), enabled: true },
+    AgentRoute { agent: "kimi".into(), prefix: "kimi".into(), enabled: true },
+    AgentRoute { agent: "dsh".into(), prefix: "dsh".into(), enabled: true },
+    AgentRoute { agent: "hermes".into(), prefix: "hermes".into(), enabled: true },
+    AgentRoute { agent: "openclaw".into(), prefix: "openclaw".into(), enabled: true },
     AgentRoute { agent: "gemini".into(), prefix: "gemini".into(), enabled: false }
     ]
 }
@@ -126,7 +128,6 @@ impl Settings {
                 bail!("agent prefix must be a non-empty single token");
             }
             if !prefixes.insert(prefix) || !agents.insert(route.agent.as_str()) { bail!("duplicate agent or prefix"); }
-            if route.enabled && route.agent != "codex" { bail!("execution adapter unavailable for {}", route.agent); }
         }
         let mut aliases = std::collections::HashSet::new();
         for p in &self.projects {

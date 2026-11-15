@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, CircleHelp,
-  Mail, RotateCw, Settings2, ShieldCheck, Send, Activity
+  Mail, Settings2, ShieldCheck, Send, Activity
 } from "lucide-react";
 import "./style.css";
 
@@ -20,7 +20,6 @@ type Settings = {
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean; onboarding_completed: boolean;
 };
-type Agent = { name: string; installed: boolean; supported: boolean };
 type Stats = {
   total_sessions: number; pending_jobs: number; running_jobs: number;
   completed_jobs: number; failed_jobs: number; received_messages: number;
@@ -71,7 +70,7 @@ const labels = {
     lastActivity: "最近活动", none: "暂无活动",
     mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时默认汇报到当前邮箱。汇报可能包含 Agent 最终回答摘要。",
     unavailable: "未检测到", available: "可用",
-    routes: "邮件主题前缀", notSupported: "未适配的 Agent 暂不可启用",
+    routes: "邮件主题前缀", notSupported: "全部前缀默认生效。当前支持 Codex、Claude Code、Gemini 执行，其他 Agent 会自动邮件回复不支持的原因。",
     enabled: "启用邮件 Agent", advanced: "高级设置", command: "Codex 命令",
     poll: "收信间隔（秒）", save: "保存设置", saving: "保存中…",
     saved: "设置已保存", error: "操作失败",
@@ -109,7 +108,7 @@ const labels = {
     lastActivity: "Last activity", none: "No activity yet",
     mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails a short result to this mailbox while running. Summaries may contain sensitive output.",
     unavailable: "Not found", available: "Available",
-    routes: "Subject prefixes", notSupported: "Unavailable runners cannot be enabled",
+    routes: "Subject prefixes", notSupported: "All prefixes are active. Codex, Claude Code and Gemini run; other agents receive an explanatory email.",
     enabled: "Enable email Agent", advanced: "Advanced", command: "Codex executable",
     poll: "Poll interval (seconds)", save: "Save settings", saving: "Saving…",
     saved: "Settings saved", error: "Action failed",
@@ -132,7 +131,6 @@ export default function App() {
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(true);
   const [secret, setSecret] = useState("");
-  const [agents, setAgents] = useState<Agent[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [routesOpen, setRoutesOpen] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -147,7 +145,6 @@ export default function App() {
   const language = settings.language === "en" ? "en" : "zh-CN";
   const t = labels[language];
   const selected = settings.mail.provider === "qq" ? "qq" : "custom";
-  const agentAvailable = agents.some(a => a.name === "codex" && a.installed && a.supported);
 
   function patch(next: Partial<Settings>) { setSettings(s => ({ ...s, ...next })); }
   function patchMail(next: Partial<MailSettings>) {
@@ -163,10 +160,6 @@ export default function App() {
     patchMail(selected === "qq" ? { address: value, username: value } : { address: value });
   }
 
-  async function refreshAgents() {
-    try { setAgents(await invoke<Agent[]>("detect_agents")); }
-    catch { setAgents([]); }
-  }
   async function refreshStats() {
     try { setStats(await invoke<Stats>("get_stats")); }
     catch { /* Preserve previous metrics while disconnected. */ }
@@ -180,7 +173,6 @@ export default function App() {
       setAllowlistText(resolved.allowlist.join("\n"));
       setView(resolved.onboarding_completed ? "dashboard" : "welcome");
     }).catch(e => setNotice(String(e))).finally(() => setLoading(false));
-    void refreshAgents();
     void refreshStats();
     const timer = setInterval(() => { void refreshStats(); }, 12000);
     return () => clearInterval(timer);
@@ -246,7 +238,7 @@ export default function App() {
     } finally { setSending(false); }
   }
   async function finishGuide(enable = false) {
-    const canEnable = enable && testSent && connectionOk && agentAvailable && !!settings.mail.address && settings.allowlist.length > 0;
+    const canEnable = enable && testSent && connectionOk && !!settings.mail.address && settings.allowlist.length > 0;
     const next = { ...settings, onboarding_completed: true, enabled: canEnable || settings.enabled };
     if (await persist(next)) { setView("dashboard"); setNotice(""); void refreshStats(); }
   }
@@ -363,7 +355,7 @@ export default function App() {
         {step === 1 && <button className="primary-button" disabled={saving || testing} onClick={() => { void nextEmail(); }}>{t.next}<ArrowRight size={15}/></button>}
         {step === 2 && <button className="primary-button" disabled={saving} onClick={() => { void nextAllowlist(); }}>{t.allowSave}<ArrowRight size={15}/></button>}
         {step === 3 && <button className="primary-button" disabled={saving} onClick={() => {void finishGuide(testSent);}}>
-          {testSent && connectionOk && agentAvailable ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
+          {testSent && connectionOk ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
       </div>
     </section>;
   }
@@ -396,32 +388,25 @@ export default function App() {
   }
 
   function settingsPanel() {
-    const available = agents.find(a => a.name === "codex");
     return <div className="settings-page">
       <div className="page-title"><h1>{t.settings}</h1>
         <button className="text-button" type="button" onClick={openGuide}><CircleHelp size={15} />{t.reopenGuide}</button></div>
       <section className="section"><h2>{t.mailboxConfig}</h2>{mailboxFields()}<p className="field-hint">{t.hookNotice}</p></section>
       <section className="section"><h2>{t.senders}</h2>{whitelistFields()}</section>
       <section className="section">
-        <div className="section-heading"><h2>{t.agent}</h2><button type="button" className="icon-action"
-          aria-label={t.refresh} title={t.refresh} onClick={() => { void refreshAgents(); }}><RotateCw size={14}/></button></div>
-        <div className="agent-line"><span>Codex</span><span className={available?.installed ? "agent-ok" : "agent-missing"}>
-          {available?.installed ? <CheckCircle2 size={14}/> : null}{available?.installed ? t.available : t.unavailable}</span></div>
+        <div className="section-heading"><h2>{t.agent}</h2></div>
         <button type="button" className="routes-toggle" aria-expanded={routesOpen} onClick={() => setRoutesOpen(!routesOpen)}>
-          <span>{t.routes}</span><span className="routes-toggle-meta">{settings.agent_routes.filter(r=>r.enabled).length}
+          <span>{t.routes}</span><span className="routes-toggle-meta">{settings.agent_routes.length}
             <ChevronDown size={15} className={routesOpen ? "rotate" : ""}/></span></button>
         {routesOpen && <div className="routes">
-          {settings.agent_routes.map((r, index) => {
-            const detected = agents.find(a => a.name === r.agent);
-            return <div className="route-row" key={r.agent}>
+          {settings.agent_routes.map((r, index) =>
+            <div className="route-row" key={r.agent}>
               <span>{r.agent}</span>
               <input aria-label={r.agent + " prefix"} value={r.prefix}
-                onChange={e => patch({ agent_routes: settings.agent_routes.map((a,i) => i===index ? {...a,prefix:e.target.value} : a) })}/>
-              <input aria-label={r.agent + " enabled"} type="checkbox" checked={r.enabled}
-                disabled={!detected?.installed || !detected.supported}
-                onChange={e => patch({ agent_routes: settings.agent_routes.map((a,i) => i===index ? {...a,enabled:e.target.checked} : a) })}/>
-            </div>;
-          })}
+                onChange={e => patch({agent_routes: settings.agent_routes.map((a,i) =>
+                  i === index ? {...a,prefix:e.target.value,enabled:true} : a)})}/>
+            </div>
+          )}
           <p className="field-hint">{t.notSupported}</p>
         </div>}
       </section>
