@@ -179,18 +179,37 @@ export const EmaReport = async ({ directory }) => ({
 fn install_pi(home:&Path,shim:&Path)->Result<()> {
     let dir=home.join(".pi/agent");
     if !dir.is_dir(){return Ok(());}
-    let js=r###"// EMA-MANAGED-HOOK: global Pi extension.
+    // Pi's agent_end fires per low-level run and can precede an auto-retry, compaction
+    // retry or queued continuation. agent_settled fires exactly once when the run will not
+    // continue automatically, so it is the correct single completion signal for reporting.
+    // agent_settled carries no messages, so the final assistant text is read back from the
+    // read-only session manager (last assistant message that actually has text).
+    let js=r###"// EMA-MANAGED-HOOK: global Pi extension. Reports once per settled run.
 import { spawn } from "node:child_process";
 const script = __SCRIPT__;
 export default function (pi) {
-  pi.on("agent_end", async (event, ctx) => {
-    if (event.willRetry) return;
-    const last = (event.messages ?? []).filter(m => m.role === "assistant").at(-1);
-    const response = (last?.content ?? []).filter(x => x.type === "text")
-      .map(x => x.text).join("\n").slice(0, 2000);
+  pi.on("agent_settled", async (event, ctx) => {
+    if (event.aborted) return;
+    const entries = (ctx.sessionManager && ctx.sessionManager.getEntries
+      ? ctx.sessionManager.getEntries() : []) || [];
+    let response = "", responseId = "";
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      const m = entry && entry.type === "message" ? entry.message : null;
+      if (!m || m.role !== "assistant") continue;
+      const c = m.content;
+      const text = Array.isArray(c)
+        ? c.filter(x => x && x.type === "text").map(x => x.text).join("\n")
+        : (typeof c === "string" ? c : "");
+      if (text) { response = text; responseId = m.responseId || ""; break; }
+    }
     const payload = JSON.stringify({
-      type: "agent_end", session_id: ctx.sessionManager?.getSessionFile?.() ?? "",
-      event_id: Date.now(), cwd: ctx.cwd ?? "", response
+      type: "agent_end",
+      session_id: (ctx.sessionManager && ctx.sessionManager.getSessionFile
+        ? ctx.sessionManager.getSessionFile() : null) || "",
+      event_id: responseId,
+      cwd: ctx.cwd || "",
+      response: response.slice(0, 2000)
     });
     try {
       const p = spawn(script, ["pi"], { stdio: ["pipe", "ignore", "ignore"] });
@@ -423,4 +442,175 @@ pub fn tick(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
     private_dir(&dir.join("inbox"))?;
     atomic_write(&dir.join("active"),now().to_string().as_bytes())?;
     drain(root,cfg,db).context("hook event processing")
+}
+
+#[cfg(all(test, unix))]
+mod pi_codex_tests {
+    use super::*;
+    use std::{io::Write, process::{Command, Stdio}};
+
+    struct Sandbox(PathBuf);
+    impl Sandbox {
+        fn new() -> Self {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/hook-tests").join(uuid::Uuid::new_v4().to_string());
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Sandbox {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+    fn db_and_cfg(sandbox: &Sandbox) -> (Database, Settings) {
+        let db = Database::open(&sandbox.0.join("root/ema.db")).unwrap();
+        let mut cfg = Settings::default();
+        cfg.mail.address = "isolated@example.invalid".into();
+        (db, cfg)
+    }
+
+    fn pi_payload() -> String {
+        // Mirrors the payload EMA's Pi extension emits on agent_settled.
+        let v = json!({
+            "type": "agent_end",
+            "session_id": "/tmp/pi/sessions/demo.jsonl",
+            "event_id": "resp-abc-1",
+            "cwd": "/tmp/pi/project",
+            "response": "Pi finished the task."
+        });
+        serde_json::to_string(&v).unwrap()
+    }
+
+    #[test]
+    fn pi_reports_completion_once() {
+        let v: Value = serde_json::from_str(&pi_payload()).unwrap();
+        let (session, subject, body) = format_report("pi", &v).expect("pi agent_end report");
+        assert_eq!(session, "/tmp/pi/sessions/demo.jsonl");
+        assert_eq!(subject, "EMA Report | PI | Completed");
+        assert!(body.contains("Project: project"));
+        assert!(body.contains("Pi finished the task."));
+        // A wrong event type must be discarded, like every other adapter.
+        let mut other = v.clone();
+        other["type"] = json!("agent_start");
+        assert!(format_report("pi", &other).is_none());
+    }
+
+    #[test]
+    fn pi_installs_settled_extension() {
+        let sandbox = Sandbox::new();
+        let home = sandbox.0.join("home");
+        let root = sandbox.0.join("root");
+        fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        let shim = install_shim(&root).unwrap();
+        install_pi(&home, &shim).unwrap();
+        let ext = fs::read_to_string(home.join(".pi/agent/extensions/ema-report.ts")).unwrap();
+        assert!(ext.contains("EMA-MANAGED-HOOK"));
+        assert!(ext.contains("agent_settled"), "must hook the final settled signal");
+        assert!(!ext.contains("Date.now()"), "volatile id would defeat dedup");
+        assert!(ext.contains(&serde_json::to_string(shim.to_str().unwrap()).unwrap()));
+        // Idempotent and non-destructive to other extensions.
+        let other = home.join(".pi/agent/extensions/other.ts");
+        fs::write(&other, b"// keep me").unwrap();
+        install_pi(&home, &shim).unwrap();
+        assert_eq!(fs::read_to_string(&other).unwrap(), "// keep me");
+    }
+
+    #[test]
+    fn pi_spools_and_dedupes_without_smtp() {
+        let sandbox = Sandbox::new();
+        let home = sandbox.0.join("home");
+        let root = sandbox.0.join("root");
+        fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        let shim = install_shim(&root).unwrap();
+        install_pi(&home, &shim).unwrap();
+        let (db, cfg) = db_and_cfg(&sandbox);
+        tick(&root, &cfg, &db).unwrap();
+        let payload = pi_payload();
+        // The extension spawns `shim pi` and pipes the payload on stdin.
+        for _ in 0..2 {
+            let mut child = Command::new(&shim).arg("pi")
+                .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+            child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+            assert!(child.wait().unwrap().success());
+        }
+        drain(&root, &cfg, &db).unwrap();
+        let pending = db.pending_outbox(false).unwrap();
+        assert_eq!(pending.len(), 1, "identical settled payloads must dedup to one report");
+        assert_eq!(pending[0].subject, "EMA Report | PI | Completed");
+        assert!(pending[0].body.contains("Pi finished the task."));
+        let s = db.stats().unwrap();
+        assert_eq!(s.hook_reports, 1);
+        assert_eq!(s.hook_pending, 1);
+        assert_eq!(s.hook_sent, 0);
+        // Spool must be empty after a successful drain.
+        let remaining = fs::read_dir(root.join("hooks/inbox")).unwrap()
+            .filter_map(|e| e.ok()).count();
+        assert_eq!(remaining, 0);
+    }
+
+    fn codex_payload() -> String {
+        // Exact wire shape emitted by codex-rs legacy_notify (final argv argument).
+        let v = json!({
+            "type": "agent-turn-complete",
+            "thread-id": "b5f6c1c2-1111-2222-3333-444455556666",
+            "turn-id": "12345",
+            "cwd": "/tmp/codex/project",
+            "client": "codex-tui",
+            "input-messages": ["Rename foo to bar"],
+            "last-assistant-message": "Rename complete and verified `cargo build` succeeds."
+        });
+        serde_json::to_string(&v).unwrap()
+    }
+
+    #[test]
+    fn codex_reports_from_argv_not_stdin() {
+        let v: Value = serde_json::from_str(&codex_payload()).unwrap();
+        let (session, subject, body) = format_report("codex", &v).expect("codex report");
+        assert_eq!(session, "b5f6c1c2-1111-2222-3333-444455556666");
+        assert_eq!(subject, "EMA Report | CODEX | Completed");
+        assert!(body.contains("Project: project"));
+        assert!(body.contains("Rename complete and verified"));
+        assert!(!body.contains("Rename foo to bar"), "input messages must not leak into the report");
+    }
+
+    #[test]
+    fn codex_installs_notify_and_dedupes() {
+        let sandbox = Sandbox::new();
+        let home = sandbox.0.join("home");
+        let root = sandbox.0.join("root");
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        // Preserve an unrelated existing config value.
+        fs::write(home.join(".codex/config.toml"), "model = \"kept\"\n").unwrap();
+        let shim = install_shim(&root).unwrap();
+        install_codex(&home, &shim).unwrap();
+        let toml = fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+        assert!(toml.contains("model = \"kept\""), "must preserve unrelated config");
+        assert!(toml.contains("notify"));
+        assert!(toml.contains(shim.to_str().unwrap()));
+        // A pre-existing non-EMA notify must not be overwritten.
+        let home2 = sandbox.0.join("home2");
+        fs::create_dir_all(home2.join(".codex")).unwrap();
+        fs::write(home2.join(".codex/config.toml"),
+            "notify = [\"/opt/other-notifier\", \"turn-ended\"]\n").unwrap();
+        install_codex(&home2, &shim).unwrap();
+        let toml2 = fs::read_to_string(home2.join(".codex/config.toml")).unwrap();
+        assert!(toml2.contains("/opt/other-notifier"), "must keep the user's existing notifier");
+
+        let (db, cfg) = db_and_cfg(&sandbox);
+        tick(&root, &cfg, &db).unwrap();
+        // codex appends the payload as the final argv argument; stdin is unused.
+        let payload = codex_payload();
+        for _ in 0..2 {
+            let out = Command::new(&shim).args(["codex", &payload])
+                .stdin(Stdio::null()).stdout(Stdio::piped())
+                .output().unwrap();
+            assert!(out.status.success());
+        }
+        drain(&root, &cfg, &db).unwrap();
+        let pending = db.pending_outbox(false).unwrap();
+        assert_eq!(pending.len(), 1, "same turn-id and payload must dedup to one report");
+        assert_eq!(pending[0].subject, "EMA Report | CODEX | Completed");
+        let s = db.stats().unwrap();
+        assert_eq!(s.hook_reports, 1);
+        assert_eq!(s.hook_pending, 1);
+    }
 }
