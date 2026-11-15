@@ -37,7 +37,7 @@ const qqMail = (address: string): MailSettings => ({
 const initial: Settings = {
   language: "zh-CN", mail: qqMail(""),
   router: { base_url: "https://api.openai.com/v1", model: "" },
-  agent_routes: agentNames.map(agent => ({ agent, prefix: agent, enabled: agent === "codex" })),
+  agent_routes: agentNames.map(agent => ({ agent, prefix: agent, enabled: true })),
   allowlist: [], projects: [], codex_command: "codex", workspace_write: false,
   poll_seconds: 30, progress_minutes: [10, 30, 60],
   enabled: false, onboarding_completed: false
