@@ -60,7 +60,7 @@ fn install_shim(root: &Path) -> Result<PathBuf> {
 # EMA-MANAGED-HOOK: local spool; no SMTP credentials, no remote network.
 ACTIVE=__ACTIVE__
 SPOOL=__SPOOL__
-case "$1" in codex|claude|gemini|opencode|pi|omp|kimi) ;; *) exit 0 ;; esac
+case "$1" in codex|claude|gemini|opencode|pi|omp|kimi|zcode) ;; *) exit 0 ;; esac
 [ -r "$ACTIVE" ] || exit 0
 LAST="$(cat "$ACTIVE" 2>/dev/null)"
 NOW="$(date +%s)"
@@ -266,6 +266,62 @@ export default function(pi) {
     owned_file(&dir.join("hooks/post/ema-report.ts"),&js)
 }
 
+
+#[cfg(unix)]
+fn install_zcode(home:&Path,shim:&Path)->Result<()> {
+    // ZCode runs user hooks exclusively from ~/.zcode/cli/config.json.
+    // Do not enable a previously explicitly-disabled global hook collection:
+    // doing so would silently activate unrelated third-party commands.
+    let folder=home.join(".zcode/cli");
+    if !folder.is_dir(){return Ok(());}
+    let file=folder.join("config.json");
+    let old=if file.exists(){fs::read(&file)?}else{Vec::new()};
+    let mut document:Value=if old.is_empty(){json!({})}else{
+        match serde_json::from_slice(&old) {
+            Ok(value)=>value,
+            Err(err)=>{
+                tracing::warn!(path=%file.display(),"ZCode config invalid, preserving it: {err}");
+                return Ok(());
+            }
+        }
+    };
+    let Some(root)=document.as_object_mut() else {return Ok(());};
+    let hooks=root.entry("hooks").or_insert_with(||json!({}));
+    let Some(hooks)=hooks.as_object_mut() else {
+        tracing::warn!("ZCode hooks config is incompatible; preserving existing settings");
+        return Ok(());
+    };
+    if hooks.get("enabled").and_then(Value::as_bool)==Some(false) {
+        tracing::warn!("ZCode hooks explicitly disabled; preserving owner preference");
+        return Ok(());
+    }
+    hooks.insert("enabled".into(),json!(true));
+    let events=hooks.entry("events").or_insert_with(||json!({}));
+    let Some(events)=events.as_object_mut() else {return Ok(());};
+    let stop=events.entry("Stop").or_insert_with(||json!([]));
+    let Some(groups)=stop.as_array_mut() else {return Ok(());};
+    let executable=shim.to_string_lossy().to_string();
+    let already_present=groups.iter().any(|group|{
+        group.get("hooks").and_then(Value::as_array)
+            .map(|hooks| hooks.iter().any(|entry|
+                entry.get("command").and_then(Value::as_str)==Some(executable.as_str())
+                && entry.get("args").and_then(Value::as_array)
+                    .and_then(|arr|arr.first()).and_then(Value::as_str)==Some("zcode")))
+            .unwrap_or(false)
+    });
+    if !already_present {
+        groups.push(json!({
+            "hooks":[{
+                "type":"process","command":executable,
+                "args":["zcode"],"enabled":true,"timeoutMs":5000
+            }]
+        }));
+    }
+    let updated=serde_json::to_vec_pretty(&document)?;
+    if updated!=old {backup_once(&file,&old)?;atomic_write(&file,&updated)?;}
+    Ok(())
+}
+
 /// Idempotent. Existing unrelated agent settings are retained, Codex conflicts are skipped.
 pub fn install(root:&Path)->Result<()> {
     #[cfg(unix)] {
@@ -278,7 +334,8 @@ pub fn install(root:&Path)->Result<()> {
             ("opencode",install_opencode(&home,&shim)),
             ("pi",install_pi(&home,&shim)),
             ("kimi",install_kimi(&home,&shim)),
-            ("omp",install_omp(&home,&shim))
+            ("omp",install_omp(&home,&shim)),
+            ("zcode",install_zcode(&home,&shim))
         ] {
             if let Err(err)=result {tracing::warn!(agent=name,"hook sync skipped: {err:#}");}
         }
@@ -298,7 +355,7 @@ fn format_report(agent:&str,v:&Value)->Option<(String,String,String)> {
     if !matches!((agent,typ),
         ("codex","agent-turn-complete")|("claude","Stop")|("gemini","AfterAgent")
         |("opencode","session.idle")|("pi","agent_end")|("omp","agent_end")
-        |("kimi","Stop")|("kimi","StopFailure")){return None;}
+        |("kimi","Stop")|("kimi","StopFailure")|("zcode","Stop")){return None;}
     let native_session=field(v,&["thread-id","session_id","sessionID"]).to_owned();
     let cwd=field(v,&["cwd"]);
     let project=Path::new(cwd).file_name().and_then(|x|x.to_str()).unwrap_or("unknown");
@@ -324,7 +381,7 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
         if len==0||len>MAX_EVENT{let _=fs::remove_file(&path);continue;}
         let name=entry.file_name().to_string_lossy().to_string();
         let agent=name.split('.').next().unwrap_or("");
-        if !["codex","claude","gemini","opencode","pi","omp","kimi"].contains(&agent) {
+        if !["codex","claude","gemini","opencode","pi","omp","kimi","zcode"].contains(&agent) {
             let _=fs::remove_file(&path);continue;
         }
         let bytes=fs::read(&path)?;
