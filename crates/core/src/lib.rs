@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod mail;
 pub mod hooks;
+pub mod hooks_extra;
 pub mod cli;
 pub mod router;
 pub mod workspace;
