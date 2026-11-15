@@ -451,7 +451,9 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
                     hash.update((modified / 60).to_le_bytes());
                 }
                 let id=format!("{:x}",hash.finalize());
-                db.queue_hook_report(&id,cfg.mail.address.trim(),&subject,&body)?;
+                let cwd=if agent=="alma" {v["input"]["cwd"].as_str().unwrap_or("")}
+                    else {v.get("cwd").and_then(Value::as_str).unwrap_or("")};
+                db.queue_hook_report(&id,cfg.mail.address.trim(),&subject,&body,agent,&session,cwd)?;
             }
         }
         fs::remove_file(&path)?;

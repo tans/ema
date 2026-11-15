@@ -8,12 +8,18 @@ use crate::{config::Settings, db::{Database,Job,Session}};
 pub fn runner_supported(agent:&str)->bool {
     matches!(agent,"codex"|"cc"|"gemini")
 }
+pub fn resume_supported(agent:&str)->bool {
+    runner_supported(agent) || matches!(agent,"pi"|"omp"|"opencode")
+}
 
 fn command_name<'a>(agent:&str,config:&'a Settings)->Option<&'a str> {
     match agent {
         "codex"=>Some(&config.codex_command),
         "cc"=>Some("claude"),
         "gemini"=>Some("gemini"),
+        "pi"=>Some("pi"),
+        "omp"=>Some("omp"),
+        "opencode"=>Some("opencode"),
         _=>None
     }
 }
@@ -42,7 +48,7 @@ pub fn resolve(agent:&str,config:&Settings)->Option<PathBuf> {
 }
 
 pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->Result<String> {
-    if !matches!(session.agent.as_str(),"cc"|"gemini"){
+    if !matches!(session.agent.as_str(),"cc"|"gemini"|"pi"|"omp"|"opencode"){
         bail!("{} does not have an execution adapter",session.agent);
     }
     if cfg.workspace_write {
@@ -53,7 +59,59 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
     if !path.is_dir() {bail!("working directory is unavailable");}
     let executable=resolve(&session.agent,cfg)
         .with_context(||format!("{} CLI not found. Install it or configure a supported executable.",session.agent))?;
-    let mut cmd=Command::new(executable);
+    let mut cmd=Command::new(&executable);
+    if session.agent=="opencode" {
+        let id=session.agent_session.as_deref().context("the original session ID is missing")?;
+        let mut list=Command::new(&executable);
+        list.args(["session","list","--format","json","--pure","--max-count","10000"])
+            .current_dir(&path).stdin(Stdio::null()).kill_on_drop(true);
+        for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{list.env_remove(key);}
+        let listed=tokio::time::timeout(Duration::from_secs(15),list.output()).await??;
+        if !listed.status.success() {bail!("could not verify the original OpenCode session");}
+        let sessions:serde_json::Value=serde_json::from_slice(&listed.stdout).context("invalid OpenCode session list")?;
+        if !sessions.as_array().map(|items|items.iter().any(|item|item["id"].as_str()==Some(id))).unwrap_or(false) {
+            bail!("the original OpenCode session is unavailable");
+        }
+        cmd.args(["run","--pure","--format","json","--session",id,"--"]).arg(&job.prompt)
+            .env("OPENCODE_PERMISSION",r#"{"*":"deny","read":{"*":"allow","*.env":"deny","*.env.*":"deny","*.env.example":"allow"},"glob":"allow","grep":"allow","list":"allow"}"#)
+            .current_dir(&path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
+        let output=tokio::time::timeout(Duration::from_secs(900),cmd.output()).await
+            .context("Agent exceeded 15-minute execution timeout")??;
+        if !output.status.success() {bail!("OpenCode failed: {}",String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
+        let mut answer=String::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Ok(event)=serde_json::from_str::<serde_json::Value>(line) {
+                if event["type"]=="error" {bail!("OpenCode reported a generation error");}
+                if event["type"]=="text" {
+                    if let Some(text)=event["part"]["text"].as_str() {answer.push_str(text);}
+                }
+            }
+        }
+        if answer.trim().is_empty() {bail!("OpenCode completed without a final response");}
+        return Ok(answer.chars().take(12000).collect());
+    }
+    if matches!(session.agent.as_str(),"pi"|"omp") {
+        let id=session.agent_session.as_deref().context("the original session ID is missing")?;
+        let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
+        if !session_path.is_file() {bail!("the original session file is unavailable");}
+        if session.agent=="pi" {
+            cmd.args(["-p","--session"]).arg(session_path)
+                .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+        } else {
+            cmd.arg("-p").arg("--resume").arg(session_path)
+                .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+        }
+        cmd.arg(&job.prompt).current_dir(&path)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
+        let output=tokio::time::timeout(Duration::from_secs(900),cmd.output()).await
+            .context("Agent exceeded 15-minute execution timeout")??;
+        if !output.status.success() {bail!("{} failed: {}",session.agent,String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
+        let answer=String::from_utf8_lossy(&output.stdout).chars().take(12000).collect::<String>();
+        if answer.trim().is_empty() {bail!("Agent completed without a final response");}
+        return Ok(answer);
+    }
     match session.agent.as_str() {
         "cc"=>{
             cmd.arg("-p").arg(&job.prompt)

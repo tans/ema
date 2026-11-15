@@ -107,11 +107,25 @@ EMA preserves all existing ZCode event arrays and writes a `.ema-before-hook.bak
 
 ## Agent compatibility and local completion reporting (v0.1.9)
 
+Replies to local completion reports are matched to the original Agent and session.
+An acknowledgement lists the session, Agent, task and last report; once SMTP accepts
+the acknowledgement, EMA starts the queued continuation and sends its result in the same
+thread. Mail is still detected by IMAP polling (30 seconds by default), and failed
+SMTP sends are retried. Duplicate messages do not start the task twice. The sender
+must be allowlisted, including when replying from the EMA mailbox itself.
+
+Continuation adapters are available for Codex, Claude Code, Gemini, OpenCode, Pi,
+OMP and Alma. They require a valid original session and an available local runner;
+old reports without a usable working directory may ask for clarification. Alma
+continuations require Alma to be running and, under EMA's read-only setting, run
+without tools. Other Agents receive a clear unsupported notice rather than being
+resumed as a different Agent. Actual CLI compatibility varies by installed version.
+
 The EMA status overview now separates **Email → Agent** tasks from **Local Agent → Email** completion reports. Eleven text prefixes are recognized, and unsupported email execution commands receive an informative reply instead of being silently ignored.
 
 Native local Hook reporting currently covers Codex, Claude Code, Gemini, OpenCode, Pi, OMP, Kimi, ZCode, Hermes and OpenClaw. DSH reporting is supported when the DSH profile has already installed the third-party `dsh-hooks` plugin. No additional Hook settings screen is required. Hook installation preserves explicit user disables and existing third-party rules.
 
-The only headless email execution adapters currently implemented are Codex, Claude Code and Gemini CLI. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
+New sessions started by email subject prefixes currently support Codex, Claude Code and Gemini CLI. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
 
 ## Agent routing update (v0.1.7)
 
@@ -160,7 +174,7 @@ macOS binaries are ad-hoc signed, not Apple notarized. Windows binaries lack a p
 
 ## Daily mailbox routing and working directories (v0.1.2)
 
-Use your normal email account. New tasks must come from an approved sender and start with an exact plain-text prefix followed by a space. For example: `codex Review mfggo project`. Available default prefix names are `codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`. These are editable per Agent in the desktop configuration panel. Only Codex currently has an execution adapter; the others remain disabled even if their binaries are detected. Replies to an EMA session resume by In-Reply-To / References, without a prefix.
+Use your normal email account. New tasks must come from an approved sender and start with an exact plain-text prefix followed by a space. For example: `codex Review mfggo project`. Available default prefix names are `codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`. These are editable per Agent in the desktop configuration panel. New email-started sessions support Codex, Claude Code and Gemini; other prefixes return an explicit error. Replies to an EMA session resume by In-Reply-To / References, without a prefix.
 
 EMA uses an IMAP UID cursor rather than unseen message flags. On first connection it starts with *future* messages (old inbox messages are not executed); regular messages are not marked read by EMA. If a session's work directory matches a known local project (prior session paths, configured legacy paths, or common developer folders like `~/code` and `~/projects`) it is pinned as `cwd` in SQLite. When a project directory cannot be identified unambiguously EMA sends a clarification email and does not run the Agent. Non-project tasks use isolated directories under EMA's application data `sessions/`. Paths in email or native Agent memory do not grant write permission, and new memory-first sessions remain read-only.
 

@@ -14,6 +14,9 @@ pub async fn is_available(executable: &str) -> bool {
 
 /// Execute the installed CLI directly; never send email content through a shell.
 pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Session) -> Result<String> {
+    if session.agent == "alma" {
+        return crate::alma::execute(&config, &job, &session).await;
+    }
     if session.agent != "codex" {
         return crate::cli::execute(db,&config,&job,&session).await;
     }
@@ -41,6 +44,7 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     let mut stdin = child.stdin.take().context("missing child stdin")?;
     stdin.write_all(job.prompt.as_bytes()).await?;
     stdin.shutdown().await?;
+    drop(stdin);
     let stdout = child.stdout.take().context("missing Codex stdout")?;
     let mut lines = BufReader::new(stdout).lines();
     let stderr = child.stderr.take().context("missing stderr")?;

@@ -33,6 +33,15 @@ pub struct Outbound {
     pub body: String,
     pub attempts: i64,
 }
+#[derive(Debug)]
+pub struct HookReport {
+    pub message_id: String,
+    pub subject: String,
+    pub body: String,
+    pub agent: String,
+    pub native_session: String,
+    pub cwd: Option<String>,
+}
 #[derive(Debug, Serialize)]
 pub struct MailRecord {
     pub id: String,
@@ -131,6 +140,7 @@ impl Database {
         c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_events (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS routing_replies (incoming_mid TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS hook_context (message_id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_session TEXT NOT NULL, cwd TEXT NOT NULL);
         ")?;
         let mut outbox_stmt=c.prepare("PRAGMA table_info(outbox)")?;
         let outbox_cols=outbox_stmt.query_map([], |r|r.get::<_,String>(1))?
@@ -153,6 +163,13 @@ impl Database {
         c.execute("UPDATE outbox SET created_at=(SELECT created_at FROM messages WHERE messages.message_id=outbox.message_id) WHERE created_at IS NULL", [])?;
         // A test interrupted after SMTP acceptance cannot safely be sent again automatically.
         c.execute("UPDATE outbox SET state='unknown' WHERE source='test' AND state='sending'", [])?;
+        let mut jobs_stmt=c.prepare("PRAGMA table_info(jobs)")?;
+        let jobs_cols=jobs_stmt.query_map([], |r|r.get::<_,String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(jobs_stmt);
+        if !jobs_cols.iter().any(|name|name=="ack_outbox_id") {
+            c.execute("ALTER TABLE jobs ADD COLUMN ack_outbox_id TEXT",[])?;
+        }
         // Never replay an interrupted agent run without human intervention.
         c.execute("UPDATE jobs SET state='interrupted', completed_at=strftime('%s','now') WHERE state='running'", [])?;
         Ok(Self(Mutex::new(c)))
@@ -176,27 +193,81 @@ impl Database {
         }
         Ok(None)
     }
+    pub fn is_outbound(&self, mid: &str) -> Result<bool> {
+        Ok(self.lock()?.query_row("SELECT EXISTS(SELECT 1 FROM outbox WHERE message_id=?1)",
+            [mid], |r|r.get::<_,i64>(0))? != 0)
+    }
+    pub fn find_hook_report(&self, refs: &[String]) -> Result<Option<HookReport>> {
+        let c = self.lock()?;
+        for mid in refs {
+            let row: Option<(String,String,Option<String>,Option<String>,Option<String>)> = c.query_row(
+                "SELECT o.subject,o.body,h.agent,h.native_session,h.cwd FROM outbox o
+                 LEFT JOIN hook_context h ON h.message_id=o.message_id
+                 WHERE o.message_id=?1 AND o.source='hook'",
+                [mid], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+            if let Some((subject,body,agent,native_session,cwd))=row {
+                let field=|key:&str| body.lines().find_map(|line|line.strip_prefix(key))
+                    .unwrap_or("").trim().to_string();
+                return Ok(Some(HookReport { message_id:mid.clone(), subject,
+                    agent:agent.unwrap_or_else(||field("Agent: ")),
+                    native_session:native_session.unwrap_or_else(||field("Session: ")),
+                    cwd:cwd.filter(|p|!p.is_empty()), body }));
+            }
+        }
+        Ok(None)
+    }
     pub fn session(&self, id: &str) -> Result<Session> {
         self.lock()?.query_row(
             "SELECT id,owner,agent,project,agent_session,subject,root_mid,last_mid,cwd FROM sessions WHERE id=?1",
             [id], Self::map_session).with_context(|| format!("session not found: {id}"))
     }
     pub fn store_inbound(&self, mid: &str, owner: &str, existing: Option<&Session>,
-        agent: &str, project: &str, subject: &str, prompt: &str, cwd: Option<&str>, enqueue: bool) -> Result<Option<String>> {
+        agent: &str, project: &str, subject: &str, prompt: &str, cwd: Option<&str>, enqueue: bool,
+        mailbox: &str, task: &str, hook: Option<&HookReport>) -> Result<Option<String>> {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session_id = existing.map(|s| s.id.clone()).unwrap_or_else(|| Uuid::new_v4().to_string());
         if existing.is_none() {
-            tx.execute("INSERT INTO sessions(id,owner,agent,project,subject,root_mid,last_mid,created_at,cwd)
-                VALUES(?1,?2,?3,?4,?5,?6,?6,strftime('%s','now'),?7)",
-                params![session_id, owner,agent,project,subject,mid,cwd])?;
+            let root=hook.map(|report|report.message_id.as_str()).unwrap_or(mid);
+            let original_subject=hook.map(|report|report.subject.as_str()).unwrap_or(subject);
+            tx.execute("INSERT INTO sessions(id,owner,agent,project,subject,root_mid,last_mid,created_at,cwd,agent_session)
+                VALUES(?1,?2,?3,?4,?5,?6,?6,strftime('%s','now'),?7,?8)",
+                params![session_id, owner,agent,project,original_subject,root,cwd,hook.map(|report|report.native_session.as_str())])?;
+            if hook.is_some() {
+                tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
+                    VALUES (?1,?2,'out',strftime('%s','now'))",params![root,session_id])?;
+            }
         }
         let added = tx.execute("INSERT OR IGNORE INTO messages(message_id,session_id,direction,created_at)
             VALUES (?1,?2,'in',strftime('%s','now'))", params![mid,session_id])?;
         if added == 0 { tx.rollback()?; return Ok(None); }
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
-        tx.execute("INSERT INTO jobs(id,session_id,prompt,state) VALUES(?1,?2,?3,?4)",
-            params![Uuid::new_v4().to_string(),session_id,prompt,if enqueue {"queued"} else {"awaiting_directory"}])?;
+        let job_id=Uuid::new_v4().to_string();
+        let outbox_id=Uuid::new_v4().to_string();
+        let native=existing.and_then(|s|s.agent_session.as_deref())
+            .or_else(||hook.map(|report|report.native_session.as_str()))
+            .filter(|s|!s.is_empty()).unwrap_or("尚未生成");
+        let status=if enqueue {"已排队；回执发送后开始处理。"}
+            else {"需要确认项目目录；任务尚未开始。请回复项目名称。"};
+        let task=task.chars().take(2000).collect::<String>();
+        let context=hook.map(|report|format!("\n\n上次报告：\n{}",report.body.chars().take(2600).collect::<String>())).unwrap_or_default();
+        let limit=if agent=="alma" {"\n权限：沿用 EMA 只读设置，本次不调用工具。"} else {""};
+        let body=format!("已收到邮件。\n状态：{status}\nAgent：{agent}\nAgent 会话：{native}\nEMA 会话：{session_id}\n任务 ID：{job_id}{limit}\n\n本次任务：\n{task}{context}");
+        let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
+        let out_mid=format!("<ema-{}@{}>",Uuid::new_v4(),domain);
+        let root=existing.map(|s|s.root_mid.as_str())
+            .or_else(||hook.map(|report|report.message_id.as_str())).unwrap_or(mid);
+        let refs=if root==mid {root.to_string()} else {format!("{root} {mid}")};
+        let reply_subject=existing.map(|s|s.subject.as_str())
+            .or_else(||hook.map(|report|report.subject.as_str())).unwrap_or(subject);
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))",
+            params![outbox_id,out_mid,owner,format!("Re: {reply_subject}"),mid,refs,body,mailbox])?;
+        tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
+            VALUES(?1,?2,'out',strftime('%s','now'))",params![out_mid,session_id])?;
+        tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![out_mid,session_id])?;
+        tx.execute("INSERT INTO jobs(id,session_id,prompt,state,ack_outbox_id) VALUES(?1,?2,?3,?4,?5)",
+            params![job_id,session_id,prompt,if enqueue {"queued"} else {"awaiting_directory"},outbox_id])?;
         tx.commit()?;
         Ok(Some(session_id))
     }
@@ -266,6 +337,7 @@ impl Database {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let found = tx.query_row("SELECT id,session_id,prompt FROM jobs WHERE state='queued'
+            AND (ack_outbox_id IS NULL OR EXISTS(SELECT 1 FROM outbox WHERE outbox.id=jobs.ack_outbox_id AND outbox.state='sent'))
             ORDER BY rowid ASC LIMIT 1", [], |r| Ok(Job {
                 id:r.get(0)?,session_id:r.get(1)?,prompt:r.get(2)?
             })).optional()?;
@@ -292,7 +364,7 @@ impl Database {
     /// Record one failure receipt per incoming Message-ID, even across IMAP retries.
     /// No Agent session is created for unknown/missing execution adapters.
     pub fn queue_route_error(&self, mid:&str, recipient:&str, mailbox:&str,
-        subject:&str, error:&str) -> Result<bool> {
+        subject:&str, error:&str, references:&[String]) -> Result<bool> {
         let mut c=self.lock()?;
         let tx=c.transaction()?;
         let added=tx.execute(
@@ -301,10 +373,11 @@ impl Database {
         if added == 0 {tx.rollback()?;return Ok(false);}
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let reply_mid=format!("<ema-error-{}@{}>",Uuid::new_v4(),domain);
+        let refs=references.iter().take(20).map(String::as_str).chain(std::iter::once(mid)).collect::<Vec<_>>().join(" ");
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
             VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'))",
             params![Uuid::new_v4().to_string(),reply_mid,recipient,
-                format!("Re: {}",subject),mid,mid,error,mailbox])?;
+                format!("Re: {}",subject),mid,refs,error,mailbox])?;
         tx.commit()?;
         Ok(true)
     }
@@ -329,12 +402,18 @@ impl Database {
         Ok(())
     }
     pub fn is_ema_agent_session(&self, agent:&str, native_id:&str) -> Result<bool> {
+        let agent=if agent=="claude" {"cc"} else {agent};
         Ok(self.lock()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sessions WHERE agent=?1 AND agent_session=?2)",
+            // ponytail: a short grace window catches asynchronously delivered hooks;
+            // native run IDs can replace it if all providers expose them.
+            "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.agent=?1 AND s.agent_session=?2
+              AND (NOT EXISTS(SELECT 1 FROM outbox o WHERE o.message_id=s.root_mid AND o.source='hook')
+                OR EXISTS(SELECT 1 FROM jobs j WHERE j.session_id=s.id AND
+                  (j.state='running' OR (j.state IN ('completed','failed') AND j.completed_at>=strftime('%s','now')-10)))))",
             params![agent,native_id],|r|r.get::<_,i64>(0))? != 0)
     }
     pub fn queue_hook_report(&self, fingerprint:&str, recipient:&str,
-        subject:&str, body:&str) -> Result<bool> {
+        subject:&str, body:&str, agent:&str, native_session:&str, cwd:&str) -> Result<bool> {
         if recipient.trim().is_empty() { return Ok(false); }
         let mut c=self.lock()?;
         let tx=c.transaction()?;
@@ -347,6 +426,8 @@ impl Database {
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
             VALUES(?1,?2,?3,?4,'','',?5,'hook',?3,strftime('%s','now'))",
             params![Uuid::new_v4().to_string(),message_id,recipient,subject,body])?;
+        tx.execute("INSERT INTO hook_context(message_id,agent,native_session,cwd) VALUES(?1,?2,?3,?4)",
+            params![message_id,agent,native_session,cwd])?;
         tx.commit()?;
         Ok(true)
     }
