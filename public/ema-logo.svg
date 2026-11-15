@@ -1,15 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
   <title id="title">EMA</title>
-  <desc id="desc">Electric-blue mail envelope with a neon-green check mark</desc>
-  <defs>
-    <linearGradient id="blue" x1="0" x2="1" y1="0" y2="1">
-      <stop stop-color="#1489FF"/><stop offset="1" stop-color="#0857F5"/>
-    </linearGradient>
-    <linearGradient id="lime" x1="0" x2="1" y1="1" y2="0">
-      <stop stop-color="#09C94A"/><stop offset="1" stop-color="#42FF48"/>
-    </linearGradient>
-  </defs>
-  <path d="M24 37V94Q24 100 31 100H97Q104 100 104 93V59" fill="none" stroke="url(#blue)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M24 38L60 66" fill="none" stroke="url(#blue)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M59 67L75 79L106 35" fill="none" stroke="url(#lime)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <desc id="desc">Blue envelope with a lime-green outgoing arrow</desc>
+  <rect x="5" y="5" width="118" height="118" rx="27" fill="#F9FAFC"/>
+  <path d="M29 43h70a9 9 0 0 1 9 9v38a9 9 0 0 1-9 9H29a9 9 0 0 1-9-9V52a9 9 0 0 1 9-9Z" fill="none" stroke="#0866FF" stroke-width="9" stroke-linejoin="round"/>
+  <path d="m25 49 32 26a11 11 0 0 0 14 0l32-26" fill="none" stroke="#0866FF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M71 84h25m-10-10 10 10-10 10" fill="none" stroke="#25E84F" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="100" cy="37" r="9" fill="#25E84F" stroke="#F9FAFC" stroke-width="4"/>
 </svg>
