@@ -476,3 +476,16 @@ body { margin:0; padding:0; min-width:340px; background:#f8f9fb; }
   .page-title { align-items:flex-start; }
   .page-title .text-button { max-width:120px; }
 }
+
+
+/* Keep primary navigation available when the desktop sidebar is hidden. */
+.mobile-nav { display:none; align-items:center; gap:4px; }
+.mobile-nav button { display:grid; place-items:center; width:34px; height:34px; padding:0; border:0; border-radius:8px; background:transparent; color:#778395; }
+.mobile-nav button:hover { background:#edf2fa; color:#2e5bb1; }
+.mobile-nav button.active { background:#e8f0ff; color:#1265ee; }
+@media(max-width:470px) {
+  .mobile-nav { display:flex; margin-right:auto; margin-left:12px; }
+  .header { gap:8px; }
+  .header-right { margin-left:auto; gap:5px; }
+  .header-state { font-size:10px; }
+}
