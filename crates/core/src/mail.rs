@@ -13,12 +13,80 @@ pub struct Incoming {
     pub references: Vec<String>,
     pub automated: bool,
 }
+#[derive(Debug)]
+pub struct FetchedMail {
+    pub uid: u32,
+    pub message_id: String,
+    pub sender: String,
+    pub recipient: String,
+    pub cc: String,
+    pub references: String,
+    pub original_date: String,
+    pub subject: String,
+    pub body: String,
+    pub archive_note: String,
+    pub message: Option<Incoming>,
+    pub problem: &'static str,
+}
 fn plaintext(part: &ParsedMail<'_>) -> Result<String> {
     if part.ctype.mimetype.eq_ignore_ascii_case("text/plain") { return Ok(part.get_body()?); }
     for sub in &part.subparts {
         if let Ok(text) = plaintext(sub) { if !text.is_empty() { return Ok(text); } }
     }
     Ok(String::new())
+}
+fn html(part: &ParsedMail<'_>) -> Result<String> {
+    if part.ctype.mimetype.eq_ignore_ascii_case("text/html") { return Ok(part.get_body()?); }
+    for sub in &part.subparts {
+        if let Ok(text) = html(sub) { if !text.is_empty() { return Ok(text); } }
+    }
+    Ok(String::new())
+}
+fn redact_access_codes(text: &str) -> String {
+    text.split('\n').map(|line| {
+        if let Some(pos) = line.to_ascii_lowercase().find("ema-code:") {
+            format!("{}EMA-Code: [redacted]", &line[..pos])
+        } else { line.to_string() }
+    }).collect::<Vec<_>>().join("\n")
+}
+fn archive(uid: u32, raw: &[u8]) -> FetchedMail {
+    let headers = mailparse::parse_headers(raw).ok().map(|(headers, _)| headers).unwrap_or_default();
+    let mut record = FetchedMail {
+        uid,
+        message_id: headers.get_first_value("Message-ID").unwrap_or_default(),
+        sender: headers.get_first_value("From").unwrap_or_default(),
+        recipient: headers.get_first_value("To").unwrap_or_default(),
+        cc: headers.get_first_value("Cc").unwrap_or_default(),
+        references: [headers.get_first_value("In-Reply-To"),headers.get_first_value("References")]
+            .into_iter().flatten().collect::<Vec<_>>().join(" "),
+        original_date: headers.get_first_value("Date").unwrap_or_default(),
+        subject: headers.get_first_value("Subject").unwrap_or_default(),
+        body: String::new(), archive_note: String::new(), message: None, problem: "malformed",
+    };
+    // The task parser retains its existing 256 KiB limit. Archiving can still
+    // extract a body from larger messages with attachments, up to this bound.
+    if raw.len() > 16 * 1024 * 1024 {
+        record.archive_note = "too_large".into();
+    } else if let Ok(parsed) = mailparse::parse_mail(raw) {
+        let plain = plaintext(&parsed).unwrap_or_default();
+        let is_html = plain.is_empty();
+        let text = if is_html { html(&parsed).unwrap_or_default() } else { plain };
+        let redacted = redact_access_codes(&text);
+        let mut chars = redacted.chars();
+        record.body = chars.by_ref().take(200_000).collect();
+        record.archive_note = match (is_html && !record.body.is_empty(), chars.next().is_some()) {
+            (true,true) => "html_truncated", (true,false) => "html",
+            (false,true) => "truncated", (false,false) => "",
+        }.into();
+    } else {
+        record.archive_note = "unreadable".into();
+    }
+    match parse(uid, raw) {
+        Ok(message) => { record.sender=message.sender.clone(); record.message=Some(message); record.problem=""; }
+        Err(_) if raw.len() > 256 * 1024 => record.problem="too_large_for_task",
+        Err(_) => {}
+    }
+    record
 }
 fn parse(uid: u32, raw: &[u8]) -> Result<Incoming> {
     if raw.len() > 256 * 1024 { bail!("incoming mail exceeds 256 KiB"); }
@@ -57,7 +125,7 @@ pub fn check_connection(c: &MailSettings, pass: &str) -> Result<()> {
     session.logout()?;
     Ok(())
 }
-pub fn receive(c:&MailSettings,pass:&str,last_uid:u32,known_validity:u32)->Result<(Vec<Incoming>,u32,u32)> {
+pub fn receive(c:&MailSettings,pass:&str,last_uid:u32,known_validity:u32)->Result<(Vec<FetchedMail>,u32,u32)> {
     let mut session=login(c,pass)?;
     let mailbox = session.select("INBOX")?;
     let validity = mailbox.uid_validity.unwrap_or(0);
@@ -74,16 +142,13 @@ pub fn receive(c:&MailSettings,pass:&str,last_uid:u32,known_validity:u32)->Resul
     for uid in uids.into_iter().take(30) {
         watermark=uid;
         let fetched = session.uid_fetch(uid.to_string(),"BODY.PEEK[]")?;
-        for msg in fetched.iter() {
-            if let Some(raw)=msg.body() {
-                match parse(uid,raw) {
-                    Ok(v)=>result.push(v),
-                    Err(err)=>{
-                        tracing::warn!(uid,"ignored malformed email: {err}");
-                        // Do not alter read/unread state for malformed or ordinary email.
-                    }
-                }
-            }
+        if let Some(raw)=fetched.iter().find_map(|msg| msg.body()) {
+            result.push(archive(uid,raw));
+        } else {
+            result.push(FetchedMail {uid,message_id:String::new(),sender:String::new(),
+                recipient:String::new(),cc:String::new(),references:String::new(),original_date:String::new(),
+                subject:String::new(),body:String::new(),archive_note:"unavailable".into(),
+                message:None,problem:"unavailable"});
         }
     }
     let _=session.logout();
@@ -115,21 +180,7 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     transport.send(&msg)?;
     Ok(())
 }
-
-/// Send a harmless SMTP-only connectivity email. No agent prefix or secrets in its contents.
-pub fn send_connection_test(c: &MailSettings, pass: &str, recipient: &str) -> Result<()> {
-    let from: Mailbox = c.address.parse()?;
-    let to: Mailbox = recipient.parse()?;
-    let message = Message::builder().from(from).to(to)
-        .subject("EMA email connection test")
-        .body("This is a connection test from EMA. No agent task was created.\n".to_string())?;
-    let builder = if c.smtp_port == 587 {
-        SmtpTransport::starttls_relay(&c.smtp_host)?
-    } else {
-        SmtpTransport::relay(&c.smtp_host)?
-    };
-    let transport = builder.port(c.smtp_port)
-        .credentials(Credentials::new(c.username.clone(), pass.into())).build();
-    transport.send(&message)?;
-    Ok(())
+pub fn redact_smtp_error(error: &str, password: &str) -> String {
+    let text = if password.is_empty() { error.to_string() } else { error.replace(password, "[redacted]") };
+    text.chars().take(2_000).collect()
 }

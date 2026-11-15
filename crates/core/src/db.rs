@@ -34,6 +34,26 @@ pub struct Outbound {
     pub attempts: i64,
 }
 #[derive(Debug, Serialize)]
+pub struct MailRecord {
+    pub id: String,
+    pub message_id: String,
+    pub direction: String,
+    pub sender: String,
+    pub mailbox: String,
+    pub recipient: String,
+    pub cc: String,
+    pub references: String,
+    pub original_date: String,
+    pub subject: String,
+    pub body: String,
+    pub status: String,
+    pub detail: String,
+    pub archive_note: String,
+    pub created_at: Option<i64>,
+    pub sent_at: Option<i64>,
+    pub attempts: Option<i64>,
+}
+#[derive(Debug, Serialize)]
 pub struct Stats {
     pub hook_reports: i64,
     pub hook_sent: i64,
@@ -52,6 +72,11 @@ impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
         let c = Connection::open(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
         c.busy_timeout(std::time::Duration::from_secs(3))?;
         c.execute_batch(r#"
             PRAGMA journal_mode=WAL;
@@ -76,9 +101,29 @@ impl Database {
               in_reply_to TEXT NOT NULL, refs TEXT NOT NULL,
               body TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
               attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS mail_inbox (
+              mailbox TEXT NOT NULL, uid_validity INTEGER NOT NULL, uid INTEGER NOT NULL,
+              message_id TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+              cc TEXT NOT NULL, refs TEXT NOT NULL, original_date TEXT NOT NULL, subject TEXT NOT NULL,
+              body TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+              archive_note TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY(mailbox, uid_validity, uid));
+            CREATE TABLE IF NOT EXISTS outbox_attempts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, outbox_id TEXT NOT NULL REFERENCES outbox(id),
+              attempted_at INTEGER NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state);
             CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(state, next_attempt);
         "#)?;
+        #[cfg(unix)]
+        for suffix in ["-wal", "-shm"] {
+            use std::os::unix::fs::PermissionsExt;
+            let mut name=path.as_os_str().to_os_string();
+            name.push(suffix);
+            if let Err(error)=std::fs::set_permissions(name, std::fs::Permissions::from_mode(0o600)) {
+                if error.kind() != std::io::ErrorKind::NotFound { return Err(error.into()); }
+            }
+        }
         let mut column_stmt=c.prepare("PRAGMA table_info(sessions)")?;
         let columns=column_stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
         drop(column_stmt);
@@ -94,6 +139,20 @@ impl Database {
         if !outbox_cols.iter().any(|name|name=="source") {
             c.execute("ALTER TABLE outbox ADD COLUMN source TEXT NOT NULL DEFAULT 'task'",[])?;
         }
+        for (name, definition) in [
+            ("sender", "TEXT NOT NULL DEFAULT ''"),
+            ("created_at", "INTEGER"),
+            ("sent_at", "INTEGER"),
+            ("last_error", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            if !outbox_cols.iter().any(|column| column == name) {
+                c.execute(&format!("ALTER TABLE outbox ADD COLUMN {name} {definition}"), [])?;
+            }
+        }
+        // Older threaded replies have a creation time in messages; other old rows do not.
+        c.execute("UPDATE outbox SET created_at=(SELECT created_at FROM messages WHERE messages.message_id=outbox.message_id) WHERE created_at IS NULL", [])?;
+        // A test interrupted after SMTP acceptance cannot safely be sent again automatically.
+        c.execute("UPDATE outbox SET state='unknown' WHERE source='test' AND state='sending'", [])?;
         // Never replay an interrupted agent run without human intervention.
         c.execute("UPDATE jobs SET state='interrupted', completed_at=strftime('%s','now') WHERE state='running'", [])?;
         Ok(Self(Mutex::new(c)))
@@ -167,6 +226,42 @@ impl Database {
         self.lock()?.execute("INSERT INTO mail_cursors(mailbox,last_uid,uid_validity) VALUES(?1,?2,?3) ON CONFLICT(mailbox) DO UPDATE SET last_uid=excluded.last_uid,uid_validity=excluded.uid_validity",params![mailbox,uid,validity])?;
         Ok(())
     }
+    pub fn record_incoming(&self, mailbox: &str, validity: u32, mail: &crate::mail::FetchedMail) -> Result<()> {
+        self.lock()?.execute("INSERT OR IGNORE INTO mail_inbox
+            (mailbox,uid_validity,uid,message_id,sender,recipient,cc,refs,original_date,subject,body,status,archive_note,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'processing',?12,strftime('%s','now'))",
+            params![mailbox,validity,mail.uid,mail.message_id,mail.sender,mail.recipient,mail.cc,
+                mail.references,mail.original_date,mail.subject,mail.body,mail.archive_note])?;
+        Ok(())
+    }
+    pub fn incoming_result(&self, mailbox: &str, validity: u32, uid: u32, status: &str, detail: &str) -> Result<()> {
+        self.lock()?.execute("UPDATE mail_inbox SET status=?4,detail=?5 WHERE mailbox=?1 AND uid_validity=?2 AND uid=?3 AND status IN ('processing','retry')",
+            params![mailbox,validity,uid,status,detail])?;
+        Ok(())
+    }
+    pub fn mail_history(&self, search: &str, offset: i64) -> Result<Vec<MailRecord>> {
+        let c = self.lock()?;
+        let mut stmt = c.prepare("SELECT id,message_id,direction,sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,sent_at,attempts FROM (
+            SELECT 'in:'||mailbox||':'||uid_validity||':'||uid AS id,message_id,'in' AS direction,
+              sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,NULL AS sent_at,0 AS attempts
+              FROM mail_inbox
+            UNION ALL
+            SELECT 'out:'||id,message_id,'out',sender,'',recipient,'',refs,'',subject,body,state,last_error,'',created_at,sent_at,
+              CASE WHEN state='sent' AND sent_at IS NULL THEN NULL ELSE attempts END FROM outbox
+            UNION ALL
+            SELECT 'legacy:'||m.message_id,m.message_id,'in',s.owner,'','','','','','','','legacy','','legacy',m.created_at,NULL,0
+              FROM messages m JOIN sessions s ON m.session_id=s.id
+              WHERE m.direction='in' AND NOT EXISTS (SELECT 1 FROM mail_inbox i WHERE i.message_id=m.message_id)
+            ) WHERE ?1='' OR instr(lower(message_id||' '||sender||' '||mailbox||' '||recipient||' '||cc||' '||refs||' '||subject||' '||body),lower(?1))>0
+            ORDER BY created_at IS NULL,created_at DESC,id DESC LIMIT 51 OFFSET ?2")?;
+        let rows=stmt.query_map(params![search.trim(),offset.max(0)],|r|Ok(MailRecord {
+            id:r.get(0)?,message_id:r.get(1)?,direction:r.get(2)?,sender:r.get(3)?,mailbox:r.get(4)?,
+            recipient:r.get(5)?,cc:r.get(6)?,references:r.get(7)?,original_date:r.get(8)?,
+            subject:r.get(9)?,body:r.get(10)?,status:r.get(11)?,detail:r.get(12)?,archive_note:r.get(13)?,
+            created_at:r.get(14)?,sent_at:r.get(15)?,attempts:r.get(16)?,
+        }))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
     pub fn claim(&self) -> Result<Option<Job>> {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
@@ -206,10 +301,10 @@ impl Database {
         if added == 0 {tx.rollback()?;return Ok(false);}
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let reply_mid=format!("<ema-error-{}@{}>",Uuid::new_v4(),domain);
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,'task')",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'))",
             params![Uuid::new_v4().to_string(),reply_mid,recipient,
-                format!("Re: {}",subject),mid,mid,error])?;
+                format!("Re: {}",subject),mid,mid,error,mailbox])?;
         tx.commit()?;
         Ok(true)
     }
@@ -223,10 +318,10 @@ impl Database {
         let mid = format!("<ema-{}@{}>",Uuid::new_v4(), domain);
         let refs = if session.root_mid == session.last_mid { session.root_mid.clone() }
             else { format!("{} {}",session.root_mid,session.last_mid) };
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body)
-            VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))",
             params![Uuid::new_v4().to_string(),mid,session.owner,format!("Re: {}",session.subject),
-                session.last_mid, refs,body])?;
+                session.last_mid, refs,body,mailbox])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
@@ -249,8 +344,8 @@ impl Database {
         if inserted == 0 { tx.rollback()?;return Ok(false); }
         let domain=recipient.split('@').nth(1).unwrap_or("localhost");
         let message_id=format!("<ema-hook-{}@{}>",Uuid::new_v4(),domain);
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source)
-            VALUES(?1,?2,?3,?4,'','',?5,'hook')",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
+            VALUES(?1,?2,?3,?4,'','',?5,'hook',?3,strftime('%s','now'))",
             params![Uuid::new_v4().to_string(),message_id,recipient,subject,body])?;
         tx.commit()?;
         Ok(true)
@@ -267,14 +362,34 @@ impl Database {
         let outgoing=rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(outgoing)
     }
-    pub fn outbox_result(&self,id:&str,success:bool,attempts:i64)->Result<()> {
-        if success {
-            self.lock()?.execute("UPDATE outbox SET state='sent' WHERE id=?1",[id])?;
+    pub fn queue_connection_test(&self, mailbox: &str, recipient: &str) -> Result<Outbound> {
+        let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
+        let outgoing=Outbound {
+            id:Uuid::new_v4().to_string(), message_id:format!("<ema-test-{}@{}>",Uuid::new_v4(),domain),
+            recipient:recipient.to_string(), subject:"EMA email connection test".into(),
+            in_reply_to:String::new(), references:String::new(),
+            body:"This is a connection test from EMA. No agent task was created.\n".into(), attempts:0,
+        };
+        self.lock()?.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,state,created_at)
+            VALUES(?1,?2,?3,?4,'','',?5,'test',?6,'sending',strftime('%s','now'))",
+            params![outgoing.id,outgoing.message_id,outgoing.recipient,outgoing.subject,outgoing.body,mailbox])?;
+        Ok(outgoing)
+    }
+    pub fn outbox_result(&self,id:&str,error:Option<&str>,attempts:i64,retry:bool,mailbox:&str)->Result<()> {
+        let mut c=self.lock()?;
+        let tx=c.transaction()?;
+        if error.is_none() {
+            tx.execute("UPDATE outbox SET state='sent',attempts=attempts+1,sent_at=strftime('%s','now'),sender=?2 WHERE id=?1",params![id,mailbox])?;
+        } else if !retry {
+            tx.execute("UPDATE outbox SET state='failed',attempts=attempts+1,last_error=?2,sender=?3 WHERE id=?1",params![id,error,mailbox])?;
         } else {
             let delay=60_i64.saturating_mul(1_i64 << attempts.min(6));
-            self.lock()?.execute("UPDATE outbox SET attempts=attempts+1,
-                next_attempt=strftime('%s','now')+?2 WHERE id=?1",params![id,delay])?;
+            tx.execute("UPDATE outbox SET attempts=attempts+1,
+                next_attempt=strftime('%s','now')+?2,last_error=?3,sender=?4 WHERE id=?1",params![id,delay,error,mailbox])?;
         }
+        tx.execute("INSERT INTO outbox_attempts(outbox_id,attempted_at,state,error) VALUES(?1,strftime('%s','now'),?2,?3)",
+            params![id,if error.is_none() {"sent"} else {"failed"},error.unwrap_or("")])?;
+        tx.commit()?;
         Ok(())
     }
     pub fn stats(&self)->Result<Stats> {

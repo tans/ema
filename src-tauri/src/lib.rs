@@ -24,6 +24,10 @@ fn set_secret(name: String, value: String) -> Result<(), String> {
 fn get_stats(state: tauri::State<'_, Arc<Gateway>>) -> Result<ema_core::db::Stats,String> {
     state.stats().map_err(|e| e.to_string())
 }
+#[tauri::command]
+fn get_mail_history(state: tauri::State<'_, Arc<Gateway>>, search: String, offset: i64) -> Result<Vec<ema_core::db::MailRecord>, String> {
+    state.database.mail_history(&search, offset).map_err(|e| e.to_string())
+}
 #[derive(Serialize)]
 struct DetectedAgent { name: &'static str, installed: bool, supported: bool }
 
@@ -82,9 +86,18 @@ async fn send_test_mail(state: tauri::State<'_, Arc<Gateway>>, recipient: String
     check.enabled = false;
     check.validate().map_err(|e| e.to_string())?;
     let password = secret("mail").map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || mail::send_connection_test(&cfg.mail, &password, &address))
-        .await.map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    let outgoing = state.database.queue_connection_test(&cfg.mail.address, &address).map_err(|e|e.to_string())?;
+    let id = outgoing.id.clone();
+    let mail_config = cfg.mail.clone();
+    let pass = password.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || mail::send(&mail_config, &pass, &outgoing)).await;
+    let error = match result {
+        Ok(Ok(())) => None,
+        Ok(Err(err)) => Some(mail::redact_smtp_error(&format!("{err:#}"),&password)),
+        Err(err) => Some(mail::redact_smtp_error(&err.to_string(),&password)),
+    };
+    state.database.outbox_result(&id,error.as_deref(),0,false,&cfg.mail.address).map_err(|e|e.to_string())?;
+    match error { Some(err) => Err(err), None => Ok(()) }
 }
 
 #[tauri::command]
@@ -125,7 +138,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_settings,save_settings,set_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail
+            get_settings,save_settings,set_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail,
+            get_mail_history
         ])
         .on_window_event(|window,event| {
             if let WindowEvent::CloseRequested{api,..}=event {

@@ -78,26 +78,40 @@ impl Gateway {
         let (incoming, fetched_watermark, current_validity) = tokio::task::spawn_blocking(move || mail::receive(&mail_config, &pass, last, validity)).await??;
         let mut watermark = if validity == current_validity { last } else { 0 };
         let mut failed=false;
-        for msg in incoming {
-            let uid=msg.uid;
-            match self.on_message(&config, msg).await {
-                Ok(()) => { watermark=uid; self.database.set_cursor(&config.mail.address, watermark, current_validity)?; },
-                Err(error) => { tracing::warn!(uid, "mail processing retry: {error:#}"); failed=true; break; },
+        for fetched in &incoming {
+            self.database.record_incoming(&config.mail.address, current_validity, fetched)?;
+        }
+        for fetched in incoming {
+            let uid=fetched.uid;
+            let result = match fetched.message {
+                Some(message) => self.on_message(&config, message).await,
+                None => Ok(fetched.problem),
+            };
+            match result {
+                Ok(status) => {
+                    self.database.incoming_result(&config.mail.address,current_validity,uid,status,"")?;
+                    watermark=uid;
+                    self.database.set_cursor(&config.mail.address, watermark, current_validity)?;
+                },
+                Err(error) => {
+                    self.database.incoming_result(&config.mail.address,current_validity,uid,"retry","")?;
+                    tracing::warn!(uid, "mail processing retry: {error:#}"); failed=true; break;
+                },
             }
         }
-        // Cursor consumes ignored malformed messages too, but never skips a failed task.
+        // Advance only after the fetched message and its processing result are stored.
         if !failed { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
         Ok(())
     }
-    async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<()> {
+    async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<&'static str> {
         if incoming.automated || incoming.sender == cfg.mail.address.to_ascii_lowercase() {
-            return Ok(());
+            return Ok("automated");
         }
         if !cfg.is_allowed(&incoming.sender) {
             tracing::warn!("mail rejected: unauthorized sender");
-            return Ok(());
+            return Ok("unauthorized");
         }
-        if incoming.body.trim().is_empty() { return Ok(()); }
+        if incoming.body.trim().is_empty() { return Ok("empty"); }
         let mut body = incoming.body.trim().to_string();
         // Workspace-write mode requires an additional out-of-band secret per message.
         // Remove the secret before handing user input to any model or persistence layer.
@@ -107,22 +121,22 @@ impl Gateway {
             let expected = config::secret("access")?;
             if !constant_time_eq(provided.as_bytes(),expected.as_bytes()) {
                 tracing::warn!("write-mode mail rejected: access code required");
-                return Ok(());
+                return Ok("access_denied");
             }
             body = body.lines().skip(1).collect::<Vec<_>>().join("\n");
-            if body.trim().is_empty() { return Ok(()); }
+            if body.trim().is_empty() { return Ok("empty"); }
         }
         let previous = self.database.find_by_references(&incoming.references)?;
         if let Some(ref session) = previous {
             if session.owner != incoming.sender {
                 tracing::warn!("mail rejected: session owner mismatch");
-                return Ok(());
+                return Ok("owner_mismatch");
             }
         }
         let (agent,project,prompt) = if let Some(ref session)=previous {
             (session.agent.clone(),session.project.clone(),body.clone())
         } else {
-            let Some(decision)=router::route(cfg,&incoming.subject,&body) else { return Ok(()); };
+            let Some(decision)=router::route(cfg,&incoming.subject,&body) else { return Ok("ordinary"); };
             (decision.agent,decision.project,decision.task)
         };
         // Every configured prefix is routable. Never silently drop an unavailable
@@ -131,19 +145,19 @@ impl Gateway {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
                 &format!("EMA could not start {agent}: this Agent does not yet have an email execution adapter. No task was executed."))?;
-            return Ok(());
+            return Ok("unsupported");
         }
         let Some(executable)=cli::resolve(&agent,cfg) else {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
                 &format!("EMA could not start {agent}: the Agent CLI was not found on this machine. Install it and retry; no task was executed."))?;
-            return Ok(());
+            return Ok("not_installed");
         };
         if !agent::is_available(&executable.to_string_lossy()).await {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
                 &format!("EMA could not start {agent}: the CLI cannot run its version check. Verify installation and retry; no task was executed."))?;
-            return Ok(());
+            return Ok("unavailable_runner");
         }
         let resolution=if let Some(ref session)=previous {
             if let Some(ref cwd)=session.cwd {
@@ -164,12 +178,12 @@ impl Gateway {
         let enqueue=cwd.is_some();
         let stored=self.database.store_inbound(&incoming.message_id,&incoming.sender,previous.as_ref(),&agent,
             &project,&incoming.subject,&prompt,cwd,enqueue)?;
-        if let Some(id)=stored {
+        if let Some(ref id)=stored {
             let text=if enqueue {format!("Task queued.\nAgent: {agent}\n\nReply to continue this session.")}
                 else { "Which local project directory should this task use? Reply with a known project name; no task has started.".to_string() };
-            self.database.queue_reply(&id,&cfg.mail.address,&text)?;
+            self.database.queue_reply(id,&cfg.mail.address,&text)?;
         }
-        Ok(())
+        Ok(if stored.is_none() { "duplicate" } else if enqueue { "queued" } else { "awaiting_directory" })
     }
     async fn job_loop(self: Arc<Self>) {
         loop {
@@ -217,8 +231,9 @@ impl Gateway {
             let attempts = outgoing.attempts;
             let result = tokio::task::spawn_blocking(move ||
                 mail::send(&mail_config, &password, &outgoing)).await?;
-            self.database.outbox_result(&id, result.is_ok(), attempts)?;
-            if let Err(err) = result { tracing::warn!("smtp send failed: {err:#}"); }
+            let error=result.as_ref().err().map(|err|mail::redact_smtp_error(&format!("{err:#}"),&pass));
+            self.database.outbox_result(&id,error.as_deref(),attempts,true,&cfg.mail.address)?;
+            if let Some(err) = error { tracing::warn!("smtp send failed: {err}"); }
         }
         Ok(())
     }

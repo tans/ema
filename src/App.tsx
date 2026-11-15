@@ -5,6 +5,8 @@ import {
   Mail, Settings2, ShieldCheck, Send, Activity
 } from "lucide-react";
 import "./style.css";
+import { Archive } from "lucide-react";
+import MailHistory from "./MailHistory";
 
 type MailSettings = {
   provider: string; address: string; username: string;
@@ -26,7 +28,7 @@ type Stats = {
   completed_jobs: number; failed_jobs: number; received_messages: number;
   last_activity: number | null;
 };
-type View = "welcome" | "dashboard" | "settings";
+type View = "welcome" | "dashboard" | "settings" | "history";
 type Step = 1 | 2 | 3;
 type SettingsTab = "mail" | "allowlist" | "agents";
 
@@ -47,7 +49,7 @@ const initial: Settings = {
 const labels = {
   "zh-CN": {
     language: "语言", skipAll: "跳过引导", skipStep: "跳过此步", back: "上一步",
-    settings: "设置", home: "运行概览", setup: "初始设置", step: "步骤",
+    settings: "设置", home: "运行概览", history: "邮件记录", setup: "初始设置", step: "步骤",
     emailStep: "连接邮箱", allowStep: "设置白名单", testStep: "发送测试邮件",
     emailDesc: "连接日常邮箱，授权码会安全保存在系统凭据中。",
     allowDesc: "只有下列邮箱地址发来的任务才允许进入 Agent。",
@@ -86,7 +88,7 @@ const labels = {
   },
   en: {
     language: "Language", skipAll: "Skip setup", skipStep: "Skip this step", back: "Back",
-    settings: "Settings", home: "Overview", setup: "Get started", step: "Step",
+    settings: "Settings", home: "Overview", history: "Mail history", setup: "Get started", step: "Step",
     emailStep: "Connect email", allowStep: "Sender allowlist", testStep: "Send a test email",
     emailDesc: "Connect your everyday mailbox. Your app password stays in your OS keychain.",
     allowDesc: "Only these email addresses may submit tasks to an Agent.",
@@ -475,6 +477,10 @@ export default function App() {
           type="button" onClick={() => { void goHome(); }}>
           <Activity size={17}/>{t.home}
         </button>
+        <button className={"main-nav-item " + (view === "history" ? "active" : "")}
+          type="button" onClick={() => { setNotice(""); setView("history"); }}>
+          <Archive size={17}/><span>{t.history}</span>
+        </button>
         <button className={"main-nav-item " + (view === "settings" ? "active" : "")}
           type="button" onClick={() => { setNotice(""); setView("settings"); }}>
           <Settings2 size={17}/>{t.settings}
@@ -492,11 +498,14 @@ export default function App() {
           <button type="button" className={view === "dashboard" ? "active" : ""}
             aria-label={t.home} title={t.home} aria-current={view === "dashboard" ? "page" : undefined}
             onClick={() => { void goHome(); }}><Activity size={17}/></button>
+          <button type="button" className={view === "history" ? "active" : ""}
+            aria-label={t.history} title={t.history} aria-current={view === "history" ? "page" : undefined}
+            onClick={() => { setNotice(""); setView("history"); }}><Archive size={17}/></button>
           <button type="button" className={view === "settings" ? "active" : ""}
             aria-label={t.settings} title={t.settings} aria-current={view === "settings" ? "page" : undefined}
             onClick={() => { setNotice(""); setView("settings"); }}><Settings2 size={17}/></button>
         </nav>}
-        <div className="header-context">{view === "dashboard" ? t.home : view === "settings" ? t.settings : t.setup}</div>
+        <div className="header-context">{view === "dashboard" ? t.home : view === "settings" ? t.settings : view === "history" ? t.history : t.setup}</div>
         <div className="header-right">
           {view === "welcome" && <button type="button" className="header-link"
             disabled={saving || sending || testing} onClick={() => { void finishGuide(false); }}>
@@ -512,7 +521,7 @@ export default function App() {
         </div>
       </header>
       <div className="app-content">
-        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : dashboard()}
+        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : view === "history" ? <MailHistory language={language}/> : dashboard()}
       </div>
     </div>
   </main>;
