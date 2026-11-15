@@ -398,8 +398,8 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
                 hash.update(agent.as_bytes());hash.update(&bytes);
                 // Native turn IDs are stable; providers without IDs use a minute
                 // window to avoid suppressing identical legitimate future turns.
-                if v.get("turn-id").is_none() && v.get("event_id").is_none()
-                    && v.get("timestamp").is_none() {
+                if !["turn-id","event_id","timestamp"].iter().any(|k| v.get(*k)
+                    .and_then(Value::as_str).map(|x| !x.trim().is_empty()).unwrap_or(false)) {
                     let modified=fs::metadata(&path)?.modified()?
                         .duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
                     hash.update((modified / 60).to_le_bytes());
