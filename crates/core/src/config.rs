@@ -58,7 +58,7 @@ pub fn default_routes() -> Vec<AgentRoute> {
     AgentRoute { agent: "dsh".into(), prefix: "dsh".into(), enabled: true },
     AgentRoute { agent: "hermes".into(), prefix: "hermes".into(), enabled: true },
     AgentRoute { agent: "openclaw".into(), prefix: "openclaw".into(), enabled: true },
-    AgentRoute { agent: "gemini".into(), prefix: "gemini".into(), enabled: false }
+    AgentRoute { agent: "gemini".into(), prefix: "gemini".into(), enabled: true }
     ]
 }
 
