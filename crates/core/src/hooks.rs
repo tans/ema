@@ -308,7 +308,7 @@ fn format_report(agent:&str,v:&Value)->Option<(String,String,String)> {
     let subject=format!("EMA Report | {} | {}",agent.to_ascii_uppercase(),if failed {"Failed"} else {"Completed"});
     let body=format!("Agent: {agent}\nStatus: {state}\nProject: {}\nSession: {}\n\nResult:\n{}\n\nLocal Agent hook report; this is not a new EMA task.",
         clean(project,100),clean(&native_session,128),
-        if answer.is_empty(){"Completed; final response unavailable."}else{&answer});
+        if answer.is_empty(){if failed {"Task failed; error detail unavailable."}else{"Completed; final response unavailable."}}else{&answer});
     Some((native_session,subject,body))
 }
 fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
