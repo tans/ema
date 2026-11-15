@@ -25,6 +25,14 @@ The release workflow computes its platform matrix automatically from the patch c
 
 For v0.1.4, expect EMA_0.1.4_aarch64.dmg plus SHA256SUMS. For v0.2.0, expect the six desktop installers plus SHA256SUMS. The exclusive release queue does not cancel existing runs, so a new version may queue behind an ongoing release.
 
+## Release source and GitHub permissions
+
+The release source must be the **current latest main commit**. The workflow checks this again before it creates the draft and before publication. This prevents GitHub's 403 workflow-file protection when an older commit has a different `.github/workflows/` tree. It also avoids publishing installers from a stale commit.
+
+The draft creation step deliberately does not pass `--target` or PATCH `target_commitish`. It never force-moves an existing tag; a tag pointing at another commit requires a new version. If `main` advances during a build, the release stays a draft instead of publishing mismatched binaries.
+
+If `gh release create` still returns HTTP 403 for **the current main**, check repository/organization Actions permissions and the job's printed `GITHUB_TOKEN Permissions`. `contents: write` is required. The authenticated release job must have the necessary permissions; repo/organization policies may restrict it. Retry with a **fresh workflow run**, not just rerunning an old failed job. Do not use an unrestricted personal access token as a workaround.
+
 ## Signing and Alpha safeguards
 
 - **macOS:** free ad-hoc signing, not Apple Developer ID signing or notarization. The user may need a per-app Gatekeeper approval.
