@@ -28,6 +28,7 @@ type Stats = {
 };
 type View = "welcome" | "dashboard" | "settings";
 type Step = 1 | 2 | 3;
+type SettingsTab = "mail" | "allowlist" | "agents" | "general";
 
 const agentNames = ["codex", "cc", "opencode", "pi", "omp", "zcode", "kimi", "dsh", "hermes", "openclaw", "gemini"];
 const qqMail = (address: string): MailSettings => ({
@@ -132,6 +133,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(initial);
   const [view, setView] = useState<View>("welcome");
   const [step, setStep] = useState<Step>(1);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("mail");
   const [loading, setLoading] = useState(true);
   const [secret, setSecret] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
@@ -403,64 +405,136 @@ export default function App() {
   }
 
   function settingsPanel() {
+    const tabs: { id: SettingsTab; label: string; icon: typeof Mail }[] = [
+      { id: "mail", label: t.mailboxConfig, icon: Mail },
+      { id: "allowlist", label: t.senders, icon: ShieldCheck },
+      { id: "agents", label: t.agent, icon: Activity },
+      { id: "general", label: t.advanced, icon: Settings2 }
+    ];
+    const activeTab = tabs.find(tab => tab.id === settingsTab)!;
     return <div className="settings-page">
-      <div className="page-title"><h1>{t.settings}</h1>
-        <button className="text-button" type="button" onClick={openGuide}><CircleHelp size={15} />{t.reopenGuide}</button></div>
-      <section className="section"><h2>{t.mailboxConfig}</h2>{mailboxFields()}<p className="field-hint">{t.hookNotice}</p></section>
-      <section className="section"><h2>{t.senders}</h2>{whitelistFields()}</section>
-      <section className="section">
-        <div className="section-heading"><h2>{t.agent}</h2></div>
-        <button type="button" className="routes-toggle" aria-expanded={routesOpen} onClick={() => setRoutesOpen(!routesOpen)}>
-          <span>{t.routes}</span><span className="routes-toggle-meta">{settings.agent_routes.length}
-            <ChevronDown size={15} className={routesOpen ? "rotate" : ""}/></span></button>
-        {routesOpen && <div className="routes">
-          {settings.agent_routes.map((r, index) =>
-            <div className="route-row" key={r.agent}>
-              <span>{r.agent}</span>
-              <input aria-label={r.agent + " prefix"} value={r.prefix}
-                onChange={e => patch({agent_routes: settings.agent_routes.map((a,i) =>
-                  i === index ? {...a,prefix:e.target.value,enabled:true} : a)})}/>
-            </div>
-          )}
-          <p className="field-hint">{t.notSupported}</p>
-        </div>}
-      </section>
-      <section className="section"><div className="switch-line"><span>{t.enabled}</span>
-        <input type="checkbox" checked={settings.enabled} aria-label={t.enabled} onChange={e => patch({enabled:e.target.checked})}/></div>
-        <p className="field-hint">{t.enabledHint}</p>
-      </section>
-      <button className="advanced-trigger" type="button" onClick={() => setAdvanced(!advanced)}>
-        <Settings2 size={15}/>{t.advanced}<ChevronDown size={15} className={advanced ? "rotate" : ""}/></button>
-      {advanced && <section className="section">
-        <label className="field"><span>{t.command}</span>
-          <input value={settings.codex_command} onChange={e => patch({codex_command:e.target.value})}/></label>
-        <label className="field"><span>{t.poll}</span>
-          <input type="number" min={15} max={3600} value={settings.poll_seconds}
-            onChange={e => patch({poll_seconds:Number(e.target.value)})}/></label>
-      </section>}
-      <button className="save" type="button" disabled={saving} onClick={() => { void persist(settings, true); }}>
-        {saving ? t.saving : t.save}</button>
-      {notice && <div className="notice" role="status">{notice}</div>}
+      <div className="page-title">
+        <div><span className="eyebrow">{t.settings}</span><h1>{activeTab.label}</h1></div>
+        <button className="text-button" type="button" onClick={openGuide}><CircleHelp size={15}/>{t.reopenGuide}</button>
+      </div>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label={t.settings}>
+          {tabs.map(tab => <button key={tab.id} type="button"
+            className={"settings-nav-item " + (settingsTab === tab.id ? "active" : "")}
+            aria-current={settingsTab === tab.id ? "page" : undefined}
+            onClick={() => { setSettingsTab(tab.id); setNotice(""); }}>
+            <tab.icon size={16}/><span>{tab.label}</span>
+          </button>)}
+        </nav>
+        <div className="settings-main">
+          {settingsTab === "mail" && <section className="section">
+            <h2>{t.mailboxConfig}</h2>{mailboxFields()}
+            <p className="field-hint">{t.hookNotice}</p>
+          </section>}
+          {settingsTab === "allowlist" && <section className="section">
+            <h2>{t.senders}</h2>{whitelistFields()}
+          </section>}
+          {settingsTab === "agents" && <section className="section">
+            <h2>{t.agent}</h2>
+            <button type="button" className="routes-toggle" aria-expanded={routesOpen}
+              onClick={() => setRoutesOpen(!routesOpen)}>
+              <span>{t.routes}</span>
+              <span className="routes-toggle-meta">{settings.agent_routes.length}
+                <ChevronDown size={15} className={routesOpen ? "rotate" : ""}/></span>
+            </button>
+            {routesOpen && <div className="routes">
+              {settings.agent_routes.map((route, index) => <label className="route-row" key={route.agent}>
+                <span className="route-name">{route.agent}</span>
+                <input aria-label={route.agent + " prefix"} value={route.prefix}
+                  onChange={e => patch({agent_routes: settings.agent_routes.map((a,i) =>
+                    i === index ? {...a, prefix:e.target.value, enabled:true} : a)})}/>
+              </label>)}
+            </div>}
+            <p className="field-hint">{t.notSupported}</p>
+          </section>}
+          {settingsTab === "general" && <>
+            <section className="section">
+              <h2>{t.enabled}</h2>
+              <div className="switch-line"><span>{t.enabled}</span>
+                <input type="checkbox" role="switch" checked={settings.enabled}
+                  aria-label={t.enabled} onChange={e => patch({enabled:e.target.checked})}/>
+              </div>
+              <p className="field-hint">{t.enabledHint}</p>
+            </section>
+            <section className="section">
+              <h2>{t.language}</h2>
+              <select className="language" aria-label={t.language} value={language}
+                onChange={e => patch({language:e.target.value})}>
+                <option value="zh-CN">简体中文</option><option value="en">English</option>
+              </select>
+              <button className="advanced-trigger" type="button" onClick={() => setAdvanced(!advanced)}>
+                <Settings2 size={15}/>{t.advanced}
+                <ChevronDown size={15} className={advanced ? "rotate" : ""}/>
+              </button>
+              {advanced && <div className="advanced-content">
+                <label className="field"><span>{t.command}</span>
+                  <input value={settings.codex_command}
+                    onChange={e => patch({codex_command:e.target.value})}/></label>
+                <label className="field"><span>{t.poll}</span>
+                  <input type="number" min={15} max={3600} value={settings.poll_seconds}
+                    onChange={e => patch({poll_seconds:Number(e.target.value)})}/></label>
+              </div>}
+            </section>
+          </>}
+          <div className="settings-footer">
+            {notice && <div className="notice" role="status">{notice}</div>}
+            <button className="primary-button" type="button" disabled={saving}
+              onClick={() => { void persist(settings, true); }}>
+              {saving ? t.saving : t.save}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>;
   }
 
   if (loading) return <main className="app"><div className="loading">EMA</div></main>;
   return <main className={"app app-" + view}>
-    <header className="header">
+    <aside className="app-sidebar">
       <div className="brand"><img className="brand-icon" src="/ema-logo.svg" alt=""/>
-        <div className="brand-title"><strong>EMA</strong><span>Email Agent</span></div></div>
-      <div className="header-right">
-        {view !== "dashboard" && <select aria-label={t.language} className="language" value={language}
-          onChange={e => patch({language:e.target.value})}><option value="zh-CN">中文</option><option value="en">English</option></select>}
-        {view === "welcome" && <button type="button" className="header-link" disabled={saving || sending || testing}
-          onClick={() => { void finishGuide(false); }}>{t.skipAll}</button>}
-        {view === "settings" && <button className="header-button" type="button" aria-label={t.home}
-          title={t.home} onClick={() => { void goHome(); }}><ArrowLeft size={18}/></button>}
-        {view === "dashboard" && <button className="header-button" type="button" aria-label={t.settings}
-          title={t.settings} onClick={() => {setNotice("");setView("settings");}}><Settings2 size={18}/></button>}
+        <div className="brand-title"><strong>EMA</strong><span>Email Agent</span></div>
       </div>
-    </header>
-    <div className="brand-accent" aria-hidden="true"><span/></div>
-    {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : dashboard()}
+      <nav className="main-nav" aria-label={t.settings}>
+        <button className={"main-nav-item " + (view === "dashboard" ? "active" : "")}
+          type="button" onClick={() => { void goHome(); }}>
+          <Activity size={17}/>{t.home}
+        </button>
+        <button className={"main-nav-item " + (view === "settings" ? "active" : "")}
+          type="button" onClick={() => { setNotice(""); setView("settings"); }}>
+          <Settings2 size={17}/>{t.settings}
+        </button>
+      </nav>
+      <div className="sidebar-bottom">
+        <span className={"status-indicator " + (settings.enabled ? "enabled" : "")}/>
+        <span>{settings.enabled ? t.running : t.paused}</span>
+      </div>
+    </aside>
+    <div className="app-main">
+      <header className="header">
+        <div className="mobile-brand"><img src="/ema-logo.svg" alt=""/>EMA</div>
+        <div className="header-context">{view === "dashboard" ? t.home : view === "settings" ? t.settings : t.setup}</div>
+        <div className="header-right">
+          {view === "welcome" && <button type="button" className="header-link"
+            disabled={saving || sending || testing} onClick={() => { void finishGuide(false); }}>
+            {t.skipAll}
+          </button>}
+          {view === "welcome" && <select aria-label={t.language} className="language"
+            value={language} onChange={e => patch({language:e.target.value})}>
+            <option value="zh-CN">中文</option><option value="en">English</option>
+          </select>}
+          <span className={"header-state " + (settings.enabled ? "running" : "")}>
+            <span className="state-dot"/>{settings.enabled ? t.running : t.paused}
+          </span>
+        </div>
+      </header>
+      <div className="app-content">
+        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : dashboard()}
+      </div>
+    </div>
   </main>;
 }
