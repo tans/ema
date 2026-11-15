@@ -99,6 +99,12 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 4. Receive the result, reply to the same email and verify the original Codex session resumes.
 5. Close the window; verify the tray remains active and preferences persist.
 
+### ZCode completion reporting (v0.1.8)
+
+ZCode's documented user-level `Stop` process Hook is now part of EMA's automatic HookManager. If `~/.zcode/cli/` exists, EMA merges an idempotent `Stop` handler into `~/.zcode/cli/config.json` with the local `emit.sh zcode` callback. The resulting JSON event includes the native session ID, workspace path, and `last_assistant_message`; EMA sends a short report to the configured EMA mailbox using its existing private spool and SMTP queue. It does not require a second Hook UI, SMTP configuration, or plugin installation.
+
+EMA preserves all existing ZCode event arrays and writes a `.ema-before-hook.bak` backup before modifying a non-empty config. If the user explicitly configured `hooks.enabled: false`, it is **not** overridden: automatically enabling that would also enable unrelated third-party hooks the user intentionally disabled. Hooks are snapshotted per session, so already-running ZCode sessions may need restarting. This integration is based on the [ZCode Hook specification](https://zcode.z.ai/en/docs/hooks) and still needs live testing on an installed ZCode build.
+
 ## Agent routing update (v0.1.7)
 
 All eleven default subject prefixes (`codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`) are always eligible for exact leading-token routing. The UI no longer offers per-Agent enable checkboxes or manual executable scans. Prefix text remains editable. Existing `agent_routes.enabled` fields are retained for backward compatibility but ignored by the router. An allowed sender's message using an unavailable or unsupported runner receives a **threaded, deduplicated error email** rather than being ignored. Ordinary mail still does not trigger an Agent.
