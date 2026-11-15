@@ -14,6 +14,9 @@ pub async fn is_available(executable: &str) -> bool {
 
 /// Execute the installed CLI directly; never send email content through a shell.
 pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Session) -> Result<String> {
+    if session.agent != "codex" {
+        return crate::cli::execute(db,&config,&job,&session).await;
+    }
     if config.workspace_write && session.project == "_agent_memory" {
         anyhow::bail!("write access requires an explicitly authorized project");
     }
@@ -22,7 +25,8 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
         if !path.is_dir() { anyhow::bail!("session directory is no longer available"); }
         path
     } else { config.project(&session.project)? };
-    let mut cmd = Command::new(&config.codex_command);
+    let executable=crate::cli::resolve("codex",&config).context("Codex CLI command is unavailable")?;
+    let mut cmd = Command::new(executable);
     cmd.arg("exec").arg("--json").arg("-C").arg(&cwd)
         .arg("--sandbox").arg(if config.workspace_write { "workspace-write" } else { "read-only" });
     if let Some(existing) = &session.agent_session {
