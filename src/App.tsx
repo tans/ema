@@ -488,6 +488,14 @@ export default function App() {
     <div className="app-main">
       <header className="header">
         <div className="mobile-brand"><img src="/ema-logo.svg" alt=""/>EMA</div>
+        {view !== "welcome" && <nav className="mobile-nav" aria-label={t.settings}>
+          <button type="button" className={view === "dashboard" ? "active" : ""}
+            aria-label={t.home} title={t.home} aria-current={view === "dashboard" ? "page" : undefined}
+            onClick={() => { void goHome(); }}><Activity size={17}/></button>
+          <button type="button" className={view === "settings" ? "active" : ""}
+            aria-label={t.settings} title={t.settings} aria-current={view === "settings" ? "page" : undefined}
+            onClick={() => { setNotice(""); setView("settings"); }}><Settings2 size={17}/></button>
+        </nav>}
         <div className="header-context">{view === "dashboard" ? t.home : view === "settings" ? t.settings : t.setup}</div>
         <div className="header-right">
           {view === "welcome" && <button type="button" className="header-link"
