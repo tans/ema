@@ -17,7 +17,7 @@ fn private_dir(p: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn atomic_write(p: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(p: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     if let Some(parent)=p.parent() { fs::create_dir_all(parent)?; }
     let tmp=p.with_extension(format!("ema-{}", uuid::Uuid::new_v4()));
@@ -36,7 +36,7 @@ fn atomic_write(p: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(unix)]
 fn shell_quote(s: &str) -> String { format!("'{}'",s.replace('\'',"'\\''")) }
 #[cfg(unix)]
-fn owned_file(path: &Path, content: &str) -> Result<()> {
+pub(crate) fn owned_file(path: &Path, content: &str) -> Result<()> {
     if path.exists() {
         let existing=fs::read_to_string(path)?;
         if existing==content { return Ok(()); }
@@ -60,7 +60,7 @@ fn install_shim(root: &Path) -> Result<PathBuf> {
 # EMA-MANAGED-HOOK: local spool; no SMTP credentials, no remote network.
 ACTIVE=__ACTIVE__
 SPOOL=__SPOOL__
-case "$1" in codex|claude|gemini|opencode|pi|omp|kimi|zcode) ;; *) exit 0 ;; esac
+case "$1" in codex|claude|gemini|opencode|pi|omp|kimi|zcode|hermes|openclaw|dsh) ;; *) exit 0 ;; esac
 [ -r "$ACTIVE" ] || exit 0
 LAST="$(cat "$ACTIVE" 2>/dev/null)"
 NOW="$(date +%s)"
@@ -104,7 +104,7 @@ fn install_codex(home: &Path, shim: &Path) -> Result<()> {
     atomic_write(&file,doc.to_string().as_bytes())
 }
 #[cfg(unix)]
-fn backup_once(path:&Path, old:&[u8])->Result<()> {
+pub(crate) fn backup_once(path:&Path, old:&[u8])->Result<()> {
     if !old.is_empty() {
         let backup=path.with_extension("ema-before-hook.bak");
         if !backup.exists(){atomic_write(&backup,old)?;}
@@ -339,6 +339,7 @@ pub fn install(root:&Path)->Result<()> {
         ] {
             if let Err(err)=result {tracing::warn!(agent=name,"hook sync skipped: {err:#}");}
         }
+        crate::hooks_extra::install(&home,&shim);
     }
     #[cfg(not(unix))] {let _=root;}
     Ok(())
@@ -360,9 +361,12 @@ fn format_report(agent:&str,v:&Value)->Option<(String,String,String)> {
     let cwd=field(v,&["cwd"]);
     let project=Path::new(cwd).file_name().and_then(|x|x.to_str()).unwrap_or("unknown");
     let answer=clean(field(v,&["last-assistant-message","last_assistant_message","prompt_response","response"]),2000);
-    let failed=agent=="kimi" && typ=="StopFailure";
-    let state=if failed {"failed"} else {"completed"};
-    let subject=format!("EMA Report | {} | {}",agent.to_ascii_uppercase(),if failed {"Failed"} else {"Completed"});
+    let failed=(agent=="kimi" && typ=="StopFailure")
+        || v.get("failed").and_then(Value::as_bool)==Some(true)
+        || v.get("completed").and_then(Value::as_bool)==Some(false);
+    let interrupted=v.get("interrupted").and_then(Value::as_bool)==Some(true);
+    let state=if interrupted {"interrupted"} else if failed {"failed"} else {"completed"};
+    let subject=format!("EMA Report | {} | {}",agent.to_ascii_uppercase(),if interrupted {"Interrupted"} else if failed {"Failed"} else {"Completed"});
     let body=format!("Agent: {agent}\nStatus: {state}\nProject: {}\nSession: {}\n\nResult:\n{}\n\nLocal Agent hook report; this is not a new EMA task.",
         clean(project,100),clean(&native_session,128),
         if answer.is_empty(){if failed {"Task failed; error detail unavailable."}else{"Completed; final response unavailable."}}else{&answer});
@@ -381,7 +385,7 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
         if len==0||len>MAX_EVENT{let _=fs::remove_file(&path);continue;}
         let name=entry.file_name().to_string_lossy().to_string();
         let agent=name.split('.').next().unwrap_or("");
-        if !["codex","claude","gemini","opencode","pi","omp","kimi","zcode"].contains(&agent) {
+        if !["codex","claude","gemini","opencode","pi","omp","kimi","zcode","hermes","openclaw","dsh"].contains(&agent) {
             let _=fs::remove_file(&path);continue;
         }
         let bytes=fs::read(&path)?;
