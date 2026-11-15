@@ -105,6 +105,14 @@ ZCode's documented user-level `Stop` process Hook is now part of EMA's automatic
 
 EMA preserves all existing ZCode event arrays and writes a `.ema-before-hook.bak` backup before modifying a non-empty config. If the user explicitly configured `hooks.enabled: false`, it is **not** overridden: automatically enabling that would also enable unrelated third-party hooks the user intentionally disabled. Hooks are snapshotted per session, so already-running ZCode sessions may need restarting. This integration is based on the [ZCode Hook specification](https://zcode.z.ai/en/docs/hooks) and still needs live testing on an installed ZCode build.
 
+## Agent compatibility and local completion reporting (v0.1.9)
+
+The EMA status overview now separates **Email → Agent** tasks from **Local Agent → Email** completion reports. Eleven text prefixes are recognized, and unsupported email execution commands receive an informative reply instead of being silently ignored.
+
+Native local Hook reporting currently covers Codex, Claude Code, Gemini, OpenCode, Pi, OMP, Kimi, ZCode, Hermes and OpenClaw. DSH reporting is supported when the DSH profile has already installed the third-party `dsh-hooks` plugin. No additional Hook settings screen is required. Hook installation preserves explicit user disables and existing third-party rules.
+
+The only headless email execution adapters currently implemented are Codex, Claude Code and Gemini CLI. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
+
 ## Agent routing update (v0.1.7)
 
 All eleven default subject prefixes (`codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`) are always eligible for exact leading-token routing. The UI no longer offers per-Agent enable checkboxes or manual executable scans. Prefix text remains editable. Existing `agent_routes.enabled` fields are retained for backward compatibility but ignored by the router. An allowed sender's message using an unavailable or unsupported runner receives a **threaded, deduplicated error email** rather than being ignored. Ordinary mail still does not trigger an Agent.
