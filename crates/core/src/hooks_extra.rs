@@ -181,11 +181,92 @@ export default {
     Ok(())
 }
 
+
+fn install_dsh(home:&Path,shim:&Path)->Result<()> {
+    let root=std::env::var_os("DSH_HOME").map(PathBuf::from)
+        .unwrap_or_else(||home.join(".dsh"));
+    let profiles=root.join("profiles");
+    if !profiles.is_dir(){return Ok(());}
+    let hook_script=shim.parent().unwrap_or(Path::new(".")).join("dsh-report.mjs");
+    let js=r###"// EMA-MANAGED-HOOK: use dsh-hooks documented process-local event variables.
+import { spawn } from "node:child_process";
+const emitter = __SCRIPT__;
+const env = process.env;
+const reason = env.DSH_HOOK_REASON ?? "unknown";
+if (env.DSH_HOOK_EVENT === "turn/end" && env.DSH_HOOK_SESSION_ID &&
+    Number(env.DSH_HOOK_RUNNING_SUBAGENTS ?? "0") === 0) {
+  const payload = JSON.stringify({
+    type: "turn/end",
+    session_id: env.DSH_HOOK_SESSION_ID,
+    turn_id: env.DSH_HOOK_TURN ?? "",
+    event_id: env.DSH_HOOK_SESSION_ID + ":" + (env.DSH_HOOK_TURN ?? ""),
+    cwd: env.DSH_HOOK_CWD ?? "",
+    response: (env.DSH_HOOK_CONTENT ?? "").slice(0,2000),
+    completed: reason === "completed",
+    failed: reason !== "completed",
+    interrupted: reason === "aborted" || reason === "interrupted"
+  });
+  try {
+    const p = spawn(emitter, ["dsh"], { stdio: ["pipe","ignore","ignore"] });
+    p.on("error", () => {});
+    p.stdin.on("error", () => {});
+    p.stdin.end(payload);
+  } catch (_) {}
+}
+"###.replace("__SCRIPT__",&serde_json::to_string(&shim.to_string_lossy().to_string())?);
+    owned_file(&hook_script,&js)?;
+    let command=format!("node {}",shell_quote(&hook_script.to_string_lossy()));
+    // EMA only extends profiles with dsh-hooks already installed.
+    for entry in fs::read_dir(profiles)?.flatten().take(64){
+        if !entry.file_type().map(|x|x.is_dir()).unwrap_or(false){continue;}
+        let file=entry.path().join("cordis.patch.yml");
+        if !file.is_file(){continue;}
+        let before=fs::read_to_string(&file)?;
+        let mut doc:serde_yaml::Value=match serde_yaml::from_str(&before){
+            Ok(x)=>x,Err(err)=>{
+                tracing::warn!(file=%file.display(),"DSH profile invalid; preserving it: {err}");
+                continue;
+            }
+        };
+        let Some(rows)=doc.as_sequence_mut() else {continue;};
+        let Some(row)=rows.iter_mut().find(|row|
+            row.as_mapping().and_then(|m|m.get(&yaml_key("id")))
+                .and_then(serde_yaml::Value::as_str)==Some("dsh-hooks")
+        )else{continue;};
+        let Some(record)=row.as_mapping_mut()else{continue;};
+        if !record.contains_key(&yaml_key("config")){
+            record.insert(yaml_key("config"),serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        }
+        let Some(config)=record.get_mut(&yaml_key("config"))
+            .and_then(serde_yaml::Value::as_mapping_mut) else {continue;};
+        if !config.contains_key(&yaml_key("hooks")){
+            config.insert(yaml_key("hooks"),serde_yaml::Value::Sequence(Vec::new()));
+        }
+        let Some(hooks)=config.get_mut(&yaml_key("hooks"))
+            .and_then(serde_yaml::Value::as_sequence_mut)else{continue;};
+        if hooks.iter().any(|hook|hook.as_mapping()
+            .and_then(|m|m.get(&yaml_key("run")))
+            .and_then(serde_yaml::Value::as_str)==Some(command.as_str())){continue;}
+        let mut rule=serde_yaml::Mapping::new();
+        rule.insert(yaml_key("on"),yaml_key("turn/end"));
+        rule.insert(yaml_key("run"),yaml_key(&command));
+        rule.insert(yaml_key("timeoutMs"),serde_yaml::to_value(5000)?);
+        hooks.push(serde_yaml::Value::Mapping(rule));
+        let new=serde_yaml::to_string(&doc)?;
+        if new!=before{
+            backup_once(&file,before.as_bytes())?;
+            atomic_write(&file,new.as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
 /// Reconcile only for agents with existing user profile directories.
 pub fn install(home:&Path,shim:&Path) {
     for (agent,result) in [
         ("hermes",install_hermes(home,shim)),
-        ("openclaw",install_openclaw(home,shim))
+        ("openclaw",install_openclaw(home,shim)),
+        ("dsh",install_dsh(home,shim))
     ] {
         if let Err(err)=result{tracing::warn!(agent,"native Hook adapter not installed: {err:#}");}
     }
