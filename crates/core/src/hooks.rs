@@ -155,14 +155,39 @@ fn install_opencode(home:&Path,shim:&Path)->Result<()> {
     let js=r###"// EMA-MANAGED-HOOK: global OpenCode completion plugin.
 import { spawn } from "node:child_process";
 const script = __SCRIPT__;
-export const EmaReport = async ({ directory }) => ({
+export const EmaReport = async ({ directory, client }) => ({
   event: async ({ event }) => {
     if (event.type !== "session.idle") return;
     const props = event.properties ?? event.data ?? {};
+    const id = props.sessionID ?? props.sessionId ?? "";
+    let title = "", prompt = "", response = "", contextMessages = [];
+    if (id) {
+      try {
+        const [session, result] = await Promise.all([
+          client.session.get({ path: { id } }), client.session.messages({ path: { id } })
+        ]);
+        title = session.data?.title ?? "";
+        const messages = result.data ?? [];
+        const text = m => (m?.parts ?? []).filter(p => p.type === "text").map(p => p.text).join("\n");
+        const last = messages.findLastIndex(m => m.info?.role === "assistant" && text(m));
+        if (last >= 0) {
+          response = text(messages[last]);
+          const before = messages.slice(0, last);
+          const input = before.map(m => m.info?.role === "user").lastIndexOf(true);
+          if (input >= 0) {
+            prompt = text(before[input]);
+            contextMessages = before.slice(0, input).filter(m => ["user", "assistant"].includes(m.info?.role) && text(m))
+              .slice(-2).map(m => ({role: m.info.role, text: Array.from(text(m)).slice(0, 1001).join("")}));
+          }
+        }
+      } catch (_) {}
+    }
     const payload = JSON.stringify({
-      type: "session.idle", session_id: props.sessionID ?? props.sessionId ?? "",
+      type: "session.idle", session_id: id, session_title: title,
       event_id: event.id ?? event.created ?? Date.now(),
-      cwd: directory ?? "", response: ""
+      cwd: directory ?? "", context_messages: contextMessages,
+      prompt: prompt.slice(0, 4000), response: response.slice(0, 10000),
+      prompt_truncated: prompt.length > 4000, response_truncated: response.length > 10000
     });
     try {
       const p = spawn(script, ["opencode"], { stdio: ["pipe", "ignore", "ignore"] });
@@ -190,9 +215,21 @@ const script = __SCRIPT__;
 export default function (pi) {
   pi.on("agent_settled", async (event, ctx) => {
     if (event.aborted) return;
-    const entries = (ctx.sessionManager && ctx.sessionManager.getEntries
-      ? ctx.sessionManager.getEntries() : []) || [];
-    let response = "", responseId = "";
+    const entries = (ctx.sessionManager?.getBranch?.() ?? ctx.sessionManager?.getEntries?.()) || [];
+    let response = "", responseId = "", prompt = "", promptIndex = -1;
+    const asText = c => Array.isArray(c) ? c.filter(x => x?.type === "text").map(x => x.text).join("\n")
+      : (typeof c === "string" ? c : "");
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const m = entries[i]?.type === "message" ? entries[i].message : null;
+      if (m?.role !== "user") continue;
+      const c = m.content;
+      prompt = Array.isArray(c) ? c.filter(x => x?.type === "text").map(x => x.text).join("\n")
+        : (typeof c === "string" ? c : "");
+      if (prompt) { promptIndex = i; break; }
+    }
+    const contextMessages = entries.slice(0, Math.max(promptIndex, 0))
+      .filter(e => e?.type === "message" && ["user", "assistant"].includes(e.message?.role) && asText(e.message.content))
+      .slice(-2).map(e => ({role: e.message.role, text: Array.from(asText(e.message.content)).slice(0, 1001).join("")}));
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       const m = entry && entry.type === "message" ? entry.message : null;
@@ -209,7 +246,11 @@ export default function (pi) {
         ? ctx.sessionManager.getSessionFile() : null) || "",
       event_id: responseId,
       cwd: ctx.cwd || "",
-      response: response.slice(0, 2000)
+      session_title: pi.getSessionName?.() || "",
+      context_messages: contextMessages,
+      prompt: prompt.slice(0, 4000),
+      response: response.slice(0, 10000),
+      prompt_truncated: prompt.length > 4000, response_truncated: response.length > 10000
     });
     try {
       const p = spawn(script, ["pi"], { stdio: ["pipe", "ignore", "ignore"] });
@@ -265,13 +306,17 @@ const script = __SCRIPT__;
 export default function(pi) {
   pi.on("agent_end", async (event, ctx) => {
     if (event.willContinue || event.awaitingAsyncWork) return;
-    const last = (event.messages ?? []).filter(m => m.role === "assistant").at(-1);
-    const response = (last?.content ?? []).filter(x => x.type === "text")
-      .map(x => x.text).join("\n").slice(0, 2000);
+    const messages = event.messages ?? [];
+    const last = messages.filter(m => m.role === "assistant").at(-1);
+    const input = messages.filter(m => m.role === "user").at(-1);
+    const asText = c => typeof c === "string" ? c : (Array.isArray(c) ? c : []).filter(x => x?.type === "text").map(x => x.text).join("\n");
+    const response = asText(last?.content);
+    const prompt = asText(input?.content);
     const payload = JSON.stringify({
       type: "agent_end", event_id: Date.now(),
       session_id: ctx.sessionManager?.getSessionFile?.() ?? "",
-      cwd: ctx.cwd ?? "", response
+      cwd: ctx.cwd ?? "", prompt: prompt.slice(0, 4000), response: response.slice(0, 10000),
+      prompt_truncated: prompt.length > 4000, response_truncated: response.length > 10000
     });
     try {
       const p = spawn(script, ["omp"], { stdio: ["pipe","ignore","ignore"] });
@@ -363,33 +408,15 @@ pub fn install(root:&Path)->Result<()> {
     #[cfg(not(unix))] {let _=root;}
     Ok(())
 }
-fn field<'a>(v:&'a Value,keys:&[&str])->&'a str{
-    keys.iter().find_map(|k|v.get(*k).and_then(Value::as_str)).unwrap_or("")
+#[path = "hook_report.rs"]
+mod report;
+
+fn format_report_in_language(agent: &str, v: &Value, language: &str) -> Option<(String, String, String)> {
+    report::format(agent, v, language)
 }
-fn clean(s:&str,limit:usize)->String{
-    s.chars().filter(|ch|!ch.is_control()||*ch=='\n'||*ch=='\t')
-        .take(limit).collect::<String>().trim().to_string()
-}
-fn format_report(agent:&str,v:&Value)->Option<(String,String,String)> {
-    let typ=field(v,&["type","hook_event_name"]);
-    if !matches!((agent,typ),
-        ("codex","agent-turn-complete")|("claude","Stop")|("gemini","AfterAgent")
-        |("opencode","session.idle")|("pi","agent_end")|("omp","agent_end")
-        |("kimi","Stop")|("kimi","StopFailure")|("zcode","Stop")){return None;}
-    let native_session=field(v,&["thread-id","session_id","sessionID"]).to_owned();
-    let cwd=field(v,&["cwd"]);
-    let project=Path::new(cwd).file_name().and_then(|x|x.to_str()).unwrap_or("unknown");
-    let answer=clean(field(v,&["last-assistant-message","last_assistant_message","prompt_response","response"]),2000);
-    let failed=(agent=="kimi" && typ=="StopFailure")
-        || v.get("failed").and_then(Value::as_bool)==Some(true)
-        || v.get("completed").and_then(Value::as_bool)==Some(false);
-    let interrupted=v.get("interrupted").and_then(Value::as_bool)==Some(true);
-    let state=if interrupted {"interrupted"} else if failed {"failed"} else {"completed"};
-    let subject=format!("EMA Report | {} | {}",agent.to_ascii_uppercase(),if interrupted {"Interrupted"} else if failed {"Failed"} else {"Completed"});
-    let body=format!("Agent: {agent}\nStatus: {state}\nProject: {}\nSession: {}\n\nResult:\n{}\n\nLocal Agent hook report; this is not a new EMA task.",
-        clean(project,100),clean(&native_session,128),
-        if answer.is_empty(){if failed {"Task failed; error detail unavailable."}else{"Completed; final response unavailable."}}else{&answer});
-    Some((native_session,subject,body))
+#[cfg(test)]
+fn format_report(agent: &str, v: &Value) -> Option<(String, String, String)> {
+    format_report_in_language(agent, v, "en")
 }
 fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
     let dir=hook_dir(root).join("inbox");
@@ -411,7 +438,7 @@ fn drain(root:&Path,cfg:&Settings,db:&Database)->Result<()> {
         let v:Value=match serde_json::from_slice(&bytes){
             Ok(v)=>v,Err(_)=>{let _=fs::remove_file(&path);continue;}
         };
-        if let Some((session,subject,body))=format_report(agent,&v){
+        if let Some((session,subject,body))=format_report_in_language(agent,&v,&cfg.language){
             if session.is_empty()||!db.is_ema_agent_session(agent,&session)? {
                 let mut hash=Sha256::new();
                 hash.update(agent.as_bytes());hash.update(&bytes);

@@ -103,6 +103,9 @@ export default {
     api.on("agent_end", async (event, ctx) => {
       const messages = Array.isArray(event?.messages) ? event.messages : [];
       const last = messages.filter(m => m?.role === "assistant").at(-1);
+      const input = messages.filter(m => m?.role === "user").at(-1);
+      const prompt = typeof input?.content === "string" ? input.content
+        : (Array.isArray(input?.content) ? input.content : []).filter(p => p?.type === "text").map(p => p.text).join("\n");
       let result = "";
       const content = last?.content;
       if (typeof content === "string") result = content;
@@ -115,7 +118,9 @@ export default {
         event_id: ctx?.runId ?? event?.runId ?? "",
         completed: !!event?.success,
         failed: event?.success === false,
-        response: result.slice(0, 2000)
+        prompt: prompt.slice(0, 4000),
+        response: result.slice(0, 10000),
+        prompt_truncated: prompt.length > 4000, response_truncated: result.length > 10000
       });
       try {
         const p = spawn(script, ["openclaw"], { stdio: ["pipe", "ignore", "ignore"] });
