@@ -28,7 +28,6 @@ impl Gateway {
         let cfg=self.settings();
         let blocked=if !cfg.enabled {Some("paused")}
             else if !cfg.is_allowed(&owner) {Some("owner_not_allowed")}
-            else if agent!="alma" && !cli::resume_supported(&agent) {Some("unsupported")}
             else if agent!="alma" && cli::resolve(&agent,&cfg).is_none() {Some("not_installed")}
             else if agent!="alma" && !std::path::Path::new(&cwd).is_dir() {Some("directory_unavailable")}
             else if matches!(agent.as_str(),"pi"|"omp") && !std::path::Path::new(&native).is_file() {Some("session_unavailable")}

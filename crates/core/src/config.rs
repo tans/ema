@@ -121,9 +121,9 @@ impl Settings {
         let mut agents = std::collections::HashSet::new();
         for route in &self.agent_routes {
             let prefix = route.prefix.trim().to_ascii_lowercase();
-            if route.agent.is_empty() || !["codex","cc","opencode","pi","omp","zcode","kimi","dsh","hermes","openclaw","gemini"].contains(&route.agent.as_str()) {
-                bail!("unsupported agent route");
-            }
+            // No static Agent allow-list: any Agent name is valid as long as
+            // the matching executable is installed locally. Availability is
+            // decided at routing time (cli::resolve), not at configuration.
             if prefix.is_empty() || route.prefix != route.prefix.trim() || prefix.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 bail!("agent prefix must be a non-empty single token");
             }

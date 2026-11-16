@@ -196,7 +196,7 @@ pub(super) fn format(agent: &str, ev: &agent_hooks::event::NormalizedEvent, lang
     };
     let next = if session.is_empty() {
         text(language,"未获取 Agent 会话 ID，无法通过回复续接；请在原应用中继续。","No Agent session ID is available. Continue in the original application.")
-    } else if crate::cli::resume_supported(agent) || agent == "alma" || (agent == "claude" && crate::cli::resume_supported("cc")) {
+    } else if agent == "alma" || crate::cli::resume_available(agent) || (agent == "claude" && crate::cli::resume_available("cc")) {
         text(language,"可直接回复继续此会话；本轮结束不代表所有目标均已完成。","Reply to continue this session. A round ending does not confirm every goal is achieved.")
     } else {
         text(language,"EMA 暂不支持此 Agent 的邮件续接，请在原应用中继续。","EMA cannot resume this Agent by email yet. Continue in the original application.")

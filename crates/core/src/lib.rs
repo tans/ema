@@ -168,18 +168,10 @@ impl Gateway {
             let Some(decision)=router::route(cfg,&incoming.subject,&body) else { return Ok("ordinary"); };
             (decision.agent,decision.project,decision.task)
         };
-        // Every configured prefix is routable. Never silently drop an unavailable
-        // adapter: queue a single human-readable error in the original email thread.
-        let supported=if hook.is_some() {cli::resume_supported(&agent)} else {cli::runner_supported(&agent)};
-        if !supported && !(agent=="alma" && hook.is_some()) {
-            self.database.queue_route_error(
-                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
-                &fmt::route_error(&cfg.language, &agent, hook.as_ref().map(|r|r.native_session.as_str()).unwrap_or(""), &body,
-                    "AGENT_UNSUPPORTED", text(&cfg.language,"EMA 暂不支持此 Agent 的执行或会话续接。","EMA does not support execution or resumption for this Agent."),
-                    text(&cfg.language,"请使用受支持的 Agent；本地会话可在原应用中继续。","Use a supported Agent or continue the local session in its original application.")),&incoming.references)?;
-            self.outbox_ready.notify_one();
-            return Ok("unsupported");
-        }
+        // Every configured prefix is routable. There is no static support
+        // whitelist: resolution below (executable present on this machine)
+        // and the availability probe are the real gates. If execution later
+        // fails, the caller receives the actual error instead of a refusal.
         if agent!="alma" {
         let Some(executable)=cli::resolve(&agent,cfg) else {
             self.database.queue_route_error(

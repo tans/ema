@@ -5,30 +5,36 @@ use std::{path::{Path,PathBuf}, process::Stdio, sync::Arc, time::Duration};
 use tokio::process::Command;
 use crate::{config::Settings, db::{Database,Job,Session}};
 
-pub fn runner_supported(agent:&str)->bool {
-    matches!(agent,"codex"|"cc"|"gemini")
-}
-pub fn resume_supported(agent:&str)->bool {
-    runner_supported(agent) || matches!(agent,"pi"|"omp"|"opencode")
-}
-
-fn command_name<'a>(agent:&str,config:&'a Settings)->Option<&'a str> {
+/// Any installed CLI is usable. There is no registration whitelist: a prefix
+/// is routable as long as the matching executable can be found on this machine
+/// (or is a configured absolute path). This replaces the old static allow-list.
+fn command_name<'a>(agent:&'a str,config:&'a Settings)->Option<&'a str> {
     match agent {
+        // Configured absolute/custom paths win for codex; the rest resolve by
+        // the agent's own command name.
         "codex"=>Some(&config.codex_command),
         "cc"=>Some("claude"),
-        "gemini"=>Some("gemini"),
-        "pi"=>Some("pi"),
-        "omp"=>Some("omp"),
-        "opencode"=>Some("opencode"),
-        _=>None
+        _=>Some(agent)
     }
 }
 
-/// GUI apps launched via Finder often lack the shell's Homebrew / npm PATH.
-pub fn resolve(agent:&str,config:&Settings)->Option<PathBuf> {
-    let raw=command_name(agent,config)?;
-    let path=PathBuf::from(raw);
-    if path.is_absolute() || raw.contains(std::path::MAIN_SEPARATOR) {
+/// Whether an email reply can attempt to resume this Agent: the executable
+/// exists locally. Actual continuation may still fail later with a concrete
+/// error (missing session file, unavailable cwd, CLI error), which is
+/// reported back instead of being refused up front.
+pub fn resume_available(agent:&str)->bool {
+    match agent {
+        "alma"=>true,
+        "cc"=>resolve_name("claude").is_some(),
+        other=>resolve_name(other).is_some(),
+    }
+}
+
+/// Look up an executable by its command name across PATH plus the common
+/// per-user bins (GUI-launched apps often lack the shell PATH).
+pub fn resolve_name(name:&str)->Option<PathBuf> {
+    let path=PathBuf::from(name);
+    if path.is_absolute() || name.contains(std::path::MAIN_SEPARATOR) {
         return path.is_file().then_some(path);
     }
     let mut dirs:Vec<PathBuf>=std::env::var_os("PATH")
@@ -40,17 +46,16 @@ pub fn resolve(agent:&str,config:&Settings)->Option<PathBuf> {
             dirs.push(home.join(sub));
         }
     }
-    for dir in dirs {
-        let candidate=dir.join(raw);
-        if candidate.is_file(){return Some(candidate);}
-    }
-    None
+    dirs.into_iter().map(|dir|dir.join(name)).find(|candidate|candidate.is_file())
+}
+
+/// Resolve the executable EMA would launch for this Agent: honour a
+/// configured absolute path (codex), then fall back to NAME lookup.
+pub fn resolve(agent:&str,config:&Settings)->Option<PathBuf> {
+    resolve_name(command_name(agent,config)?)
 }
 
 pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->Result<String> {
-    if !matches!(session.agent.as_str(),"cc"|"gemini"|"pi"|"omp"|"opencode"){
-        bail!("{} does not have an execution adapter",session.agent);
-    }
     if cfg.workspace_write {
         bail!("{} currently supports read-only email execution only",session.agent);
     }
@@ -127,7 +132,7 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
                 .arg("--sandbox").arg("--approval-mode").arg("plan");
             if let Some(id)=session.agent_session.as_deref(){cmd.arg("--resume").arg(id);}
         }
-        _=>unreachable!()
+        other=>bail!("no execution adapter for {other}: the CLI was found, but EMA has not implemented a non-interactive launch for this Agent"),
     };
     cmd.current_dir(path).stdin(Stdio::null()).stdout(Stdio::piped())
         .stderr(Stdio::piped()).kill_on_drop(true);
