@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod db;
 pub mod mail;
+pub mod email_format;
 pub mod hooks;
 #[cfg(unix)]
 pub mod hooks_alma;
@@ -12,6 +13,7 @@ pub mod alma;
 
 use anyhow::Result;
 use config::Settings;
+use email_format::{self as fmt, text};
 use db::{Database, Stats};
 use std::{path::PathBuf, sync::{Arc, RwLock}, time::Duration};
 
@@ -106,20 +108,17 @@ impl Gateway {
         Ok(())
     }
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<&'static str> {
-        if incoming.automated || self.database.is_outbound(&incoming.message_id)? {
-            return Ok("automated");
-        }
-        // Echo of our own outbound mail. QQ Mail rewrites outgoing Message-IDs
-        // (`<tencent_...@qq.com>`), so is_outbound() above misses it — but the
-        // X-EMA-* self-identification headers survive. Recognize it, record the
-        // rewritten id→original id mapping (so real replies resolve), and drop it.
-        if incoming.ema_kind.is_some() || incoming.ema_message_id.is_some() {
-            if let Some(ema_mid) = incoming.ema_message_id.as_ref() {
-                self.database.record_alias(&incoming.message_id, ema_mid)?;
+        // Self-identification must run before automated-mail filtering.
+        let marker_mid = fmt::marker_id(&incoming.body);
+        let own_id = self.database.is_outbound(&incoming.message_id)?;
+        if own_id || incoming.ema_kind.is_some() || incoming.ema_message_id.is_some() || marker_mid.is_some() {
+            if let Some(mid) = incoming.ema_message_id.as_deref().or(marker_mid) {
+                if self.database.is_outbound(mid)? { self.database.record_alias(&incoming.message_id, mid)?; }
             }
             self.database.set_inbound_kind(&incoming.message_id, "echo")?;
             return Ok("echo");
         }
+        if incoming.automated { return Ok("automated"); }
         if !cfg.is_allowed(&incoming.sender) {
             tracing::warn!("mail rejected: unauthorized sender");
             return Ok("unauthorized");
@@ -176,8 +175,9 @@ impl Gateway {
         if !supported && !(agent=="alma" && hook.is_some()) {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
-                &format!("Agent: {agent}\nSession: {}\n\nTask:\n{}\n\nEMA cannot resume this Agent yet. No task was executed.",
-                    hook.as_ref().map(|r|r.native_session.as_str()).unwrap_or("unavailable"),body.chars().take(2000).collect::<String>()),&incoming.references)?;
+                &fmt::route_error(&cfg.language, &agent, hook.as_ref().map(|r|r.native_session.as_str()).unwrap_or(""), &body,
+                    "AGENT_UNSUPPORTED", text(&cfg.language,"EMA 暂不支持此 Agent 的执行或会话续接。","EMA does not support execution or resumption for this Agent."),
+                    text(&cfg.language,"请使用受支持的 Agent；本地会话可在原应用中继续。","Use a supported Agent or continue the local session in its original application.")),&incoming.references)?;
             self.outbox_ready.notify_one();
             return Ok("unsupported");
         }
@@ -185,21 +185,25 @@ impl Gateway {
         let Some(executable)=cli::resolve(&agent,cfg) else {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
-                &format!("Agent: {agent}\nSession: {}\n\nTask:\n{}\n\nThe Agent CLI was not found on this machine. No task was executed.",
-                    hook.as_ref().map(|r|r.native_session.as_str()).or_else(||previous.as_ref().and_then(|s|s.agent_session.as_deref())).unwrap_or("unavailable"),body.chars().take(2000).collect::<String>()),&incoming.references)?;
+                &fmt::route_error(&cfg.language, &agent, previous.as_ref().and_then(|s|s.agent_session.as_deref()).unwrap_or(""), &body,
+                    "AGENT_NOT_INSTALLED", text(&cfg.language,"本机未找到 Agent 命令。","The Agent CLI was not found on this machine."),
+                    text(&cfg.language,"安装或配置 Agent 后，重新发送任务。","Install or configure the Agent, then resend the task.")),&incoming.references)?;
             self.outbox_ready.notify_one(); return Ok("not_installed");
         };
         if !agent::is_available(&executable.to_string_lossy()).await {
             self.database.queue_route_error(
                 &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
-                &format!("Agent: {agent}\nSession: {}\n\nTask:\n{}\n\nThe Agent CLI failed its version check. No task was executed.",
-                    hook.as_ref().map(|r|r.native_session.as_str()).or_else(||previous.as_ref().and_then(|s|s.agent_session.as_deref())).unwrap_or("unavailable"),body.chars().take(2000).collect::<String>()),&incoming.references)?;
+                &fmt::route_error(&cfg.language, &agent, "", &body,
+                    "AGENT_UNAVAILABLE", text(&cfg.language,"Agent 命令未通过可用性检查。","The Agent CLI failed its availability check."),
+                    text(&cfg.language,"检查本机 Agent 配置后，重新发送任务。","Check the local Agent configuration, then resend the task.")),&incoming.references)?;
             self.outbox_ready.notify_one(); return Ok("unavailable_runner");
         }
         }
         if hook.as_ref().is_some_and(|report|report.native_session.is_empty()) {
             self.database.queue_route_error(&incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
-                &format!("Agent: {agent}\nSession: unavailable\n\nTask:\n{}\n\nThe report has no session ID, so EMA cannot resume the original session. No task was executed.",body.chars().take(2000).collect::<String>()),&incoming.references)?;
+                &fmt::route_error(&cfg.language, &agent, "", &body,
+                    "SESSION_MISSING", text(&cfg.language,"原报告缺少 Agent 会话 ID，无法续接。","The original report has no Agent session ID and cannot be resumed."),
+                    text(&cfg.language,"请在原应用继续，或使用 Agent 前缀发起新任务。","Continue in the original application or send a new task with an Agent prefix.")),&incoming.references)?;
             self.outbox_ready.notify_one();
             return Ok("missing_session");
         }
@@ -215,7 +219,9 @@ impl Gateway {
             if let Some(path)=report.cwd.as_deref().and_then(|p|std::fs::canonicalize(p).ok()).filter(|p|p.is_dir()) {
                 workspace::Resolution::Found(path.to_string_lossy().into_owned())
             } else {
-                let project=report.body.lines().find_map(|line|line.strip_prefix("Project: ").or_else(||line.strip_prefix("项目："))).unwrap_or("unknown");
+                // Legacy reports only: current reports carry cwd in hook_context.
+                let legacy = report.body.lines().find_map(|line|line.strip_prefix("Project: ").or_else(||line.strip_prefix("项目：")));
+                let project = report.cwd.as_deref().and_then(|p|std::path::Path::new(p).file_name()).and_then(|p|p.to_str()).or(legacy).unwrap_or("unknown");
                 if project=="unknown" || project=="未提供" || project.trim().is_empty() { workspace::Resolution::Clarify }
                 else { workspace::resolve(&self.dir,&self.database,cfg,"project",project,&incoming.message_id)? }
             }
@@ -231,7 +237,7 @@ impl Gateway {
         }
         let enqueue=agent=="alma" || cwd.is_some();
         let stored=self.database.store_inbound(&incoming.message_id,&incoming.sender,previous.as_ref(),&agent,
-            &project,&incoming.subject,&prompt,cwd,enqueue,&cfg.mail.address,&body,hook.as_ref())?;
+            &project,&incoming.subject,&prompt,cwd,enqueue,&cfg.mail.address,&body,hook.as_ref(),&cfg.language)?;
         if stored.is_some() { self.outbox_ready.notify_one(); }
         Ok(if stored.is_none() { "duplicate" } else if enqueue { "queued" } else { "awaiting_directory" })
     }
@@ -249,17 +255,21 @@ impl Gateway {
     async fn work_once(&self, cfg: Settings) -> Result<()> {
         let Some(job) = self.database.claim()? else { return Ok(()); };
         let session = self.database.session(&job.session_id)?;
-        let cwd_line = session.cwd.as_deref().filter(|p| !p.trim().is_empty())
-            .map(|p| format!("运行目录：{}\n", p.trim())).unwrap_or_default();
-        let result = agent::execute(self.database.clone(), cfg.clone(), job.clone(), session).await;
+        let result = agent::execute(self.database.clone(), cfg.clone(), job.clone(), session.clone()).await;
         let (success, report) = match result {
             Ok(message) => (true, message),
-            Err(err) => (false, format!("Task failed: {err:#}")),
+            Err(err) => (false, format!("{err:#}")),
         };
         self.database.finish(&job.id, success, &report)?;
-        self.database.queue_reply(&job.session_id, &cfg.mail.address,
-            &format!("{cwd_line}{}\n\n{}", if success {"Task completed"} else {"Task failed"}, report),
-            "result")?;
+        // Refresh the native session ID learned while running.
+        let session = self.database.session(&job.session_id)?;
+        let summary = if success { text(&cfg.language,"本轮执行结束，请查看 Agent 回复。","This execution round has ended. Review the Agent response.") }
+            else { text(&cfg.language,"本轮执行失败，请查看原因。","This execution round failed. Review the reason.") };
+        let body = fmt::task_report(&cfg.language, &session, &job.id, summary,
+            if success { text(&cfg.language,"本轮结束","Round ended") } else { text(&cfg.language,"失败","Failed") },
+            &[(text(&cfg.language,"结果 / 原因","Result / reason"), &fmt::excerpt(&report,fmt::RESULT_LIMIT,&cfg.language))],
+            text(&cfg.language,"请检查结果；执行结束不代表所有目标均已完成。可直接回复继续此会话。","Review the result; execution ending does not confirm every goal is achieved. Reply to continue this session."));
+        self.database.queue_reply(&job.session_id, &cfg.mail.address, &body, "result")?;
         self.outbox_ready.notify_one();
         Ok(())
     }

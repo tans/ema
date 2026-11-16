@@ -45,5 +45,5 @@ pub async fn execute(cfg:&Settings, job:&Job, session:&Session) -> Result<String
     }
     let response=String::from_utf8(output.stdout).context("invalid Alma response")?;
     if response.trim().is_empty() {bail!("Alma completed without a text response");}
-    Ok(response.chars().take(12_000).collect())
+    Ok(crate::email_format::excerpt(&response, crate::email_format::RESULT_LIMIT, &cfg.language))
 }

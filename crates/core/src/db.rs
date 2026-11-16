@@ -3,6 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
+use crate::email_format::{self as fmt, text};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -269,7 +270,7 @@ impl Database {
     }
     pub fn store_inbound(&self, mid: &str, owner: &str, existing: Option<&Session>,
         agent: &str, project: &str, subject: &str, prompt: &str, cwd: Option<&str>, enqueue: bool,
-        mailbox: &str, task: &str, hook: Option<&HookReport>) -> Result<Option<String>> {
+        mailbox: &str, task: &str, hook: Option<&HookReport>, language: &str) -> Result<Option<String>> {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session_id = existing.map(|s| s.id.clone()).unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -290,21 +291,20 @@ impl Database {
         // Mail classification: a message that reaches this point is a task — either the
         // start of a new session or a continuation of an existing one.
         tx.execute("UPDATE mail_inbox SET kind=?2 WHERE message_id=?1",
-            params![mid, if existing.is_some() {"resume_task"} else {"new_task"}])?;
+            params![mid, if existing.is_some() || hook.is_some() {"resume_task"} else {"new_task"}])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
         let job_id=Uuid::new_v4().to_string();
         let outbox_id=Uuid::new_v4().to_string();
-        let native=existing.and_then(|s|s.agent_session.as_deref())
-            .or_else(||hook.map(|report|report.native_session.as_str()))
-            .filter(|s|!s.is_empty()).unwrap_or("尚未生成");
-        let status=if enqueue {"已排队；回执发送后开始处理。"}
-            else {"需要确认项目目录；任务尚未开始。请回复项目名称。"};
-        let task=task.chars().take(2000).collect::<String>();
-        let context=hook.map(|report|format!("\n\n上次报告：\n{}",report.body.chars().take(2600).collect::<String>())).unwrap_or_default();
-        let limit=if agent=="alma" {"\n权限：沿用 EMA 只读设置，本次不调用工具。"} else {""};
-        let cwd_line=cwd.filter(|p|!p.trim().is_empty())
-            .map(|p|format!("运行目录：{}\n",p.trim())).unwrap_or_default();
-        let body=format!("{cwd_line}已收到邮件。\n状态：{status}\nAgent：{agent}\nAgent 会话：{native}\nEMA 会话：{session_id}\n任务 ID：{job_id}{limit}\n\n本次任务：\n{task}{context}");
+        let status = if enqueue { text(language, "已排队", "Queued") } else { text(language, "待补充信息，尚未执行", "Awaiting input; not started") };
+        let native = existing.and_then(|s| s.agent_session.clone()).or_else(|| hook.map(|r| r.native_session.clone()));
+        let session = Session { id: session_id.clone(), owner: owner.into(), agent: agent.into(), project: project.into(),
+            cwd: cwd.map(str::to_owned), agent_session: native, subject: subject.into(), root_mid: String::new(), last_mid: String::new() };
+        let next = if enqueue { text(language, "回执发送后开始处理，请等待结果。可直接回复补充要求。", "Processing starts after this acknowledgment is sent. Wait for the result or reply with additional instructions.") }
+            else { text(language, "请直接回复项目名称或项目目录。", "Reply with the project name or working directory.") };
+        let permission = if agent == "alma" { text(language, "只读；本轮不调用工具", "Read-only; no tools in this turn") } else { "" };
+        let body = fmt::task_report(language, &session, &job_id, text(language, "已收到本次指令。", "Your instruction has been received."), status,
+            &[(text(language, "本次指令", "Instruction"), &fmt::excerpt(task, fmt::TASK_LIMIT, language)),
+              (text(language, "权限", "Permissions"), permission)], next);
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let out_mid=format!("<ema-{}@{}>",Uuid::new_v4(),domain);
         let root=existing.map(|s|s.root_mid.as_str())
@@ -312,10 +312,10 @@ impl Database {
         let refs=if root==mid {root.to_string()} else {format!("{root} {mid}")};
         let reply_subject=existing.map(|s|s.subject.as_str())
             .or_else(||hook.map(|report|report.subject.as_str())).unwrap_or(subject);
-        let ack_kind=if existing.is_some() {"resume_ack"} else {"new_task_ack"};
+        let ack_kind=if existing.is_some() || hook.is_some() {"resume_ack"} else {"new_task_ack"};
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
-            params![outbox_id,out_mid,owner,format!("Re: {reply_subject}"),mid,refs,body,mailbox,ack_kind])?;
+            params![outbox_id,out_mid,owner,fmt::reply_subject(reply_subject),mid,refs,fmt::envelope(ack_kind,&out_mid,&body),mailbox,ack_kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![out_mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![out_mid,session_id])?;
@@ -430,11 +430,12 @@ impl Database {
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'),'error')",
             params![Uuid::new_v4().to_string(),reply_mid,recipient,
-                format!("Re: {}",subject),mid,refs,error,mailbox])?;
+                fmt::reply_subject(subject),mid,refs,fmt::envelope("error",&reply_mid,error),mailbox])?;
         tx.commit()?;
         Ok(true)
     }
     pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str, kind: &str) -> Result<()> {
+        anyhow::ensure!(fmt::KINDS.contains(&kind), "invalid outbound mail kind: {kind}");
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session = tx.query_row(
@@ -446,8 +447,8 @@ impl Database {
             else { format!("{} {}",session.root_mid,session.last_mid) };
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
-            params![Uuid::new_v4().to_string(),mid,session.owner,format!("Re: {}",session.subject),
-                session.last_mid, refs,body,mailbox,kind])?;
+            params![Uuid::new_v4().to_string(),mid,session.owner,fmt::reply_subject(&session.subject),
+                session.last_mid, refs,fmt::envelope(kind,&mid,body),mailbox,kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
@@ -478,7 +479,7 @@ impl Database {
         let message_id=format!("<ema-hook-{}@{}>",Uuid::new_v4(),domain);
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,'','',?5,'hook',?3,strftime('%s','now'),'hook')",
-            params![Uuid::new_v4().to_string(),message_id,recipient,subject,body])?;
+            params![Uuid::new_v4().to_string(),message_id,recipient,fmt::single_line(subject,100),fmt::envelope("hook",&message_id,body)])?;
         tx.execute("INSERT INTO hook_context(message_id,agent,native_session,cwd) VALUES(?1,?2,?3,?4)",
             params![message_id,agent,native_session,cwd])?;
         tx.commit()?;
@@ -496,17 +497,21 @@ impl Database {
         let outgoing=rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(outgoing)
     }
-    pub fn queue_connection_test(&self, mailbox: &str, recipient: &str) -> Result<Outbound> {
+    pub fn queue_connection_test(&self, mailbox: &str, recipient: &str, language: &str) -> Result<Outbound> {
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
-        let outgoing=Outbound {
+        let mut outgoing=Outbound {
             id:Uuid::new_v4().to_string(), message_id:format!("<ema-test-{}@{}>",Uuid::new_v4(),domain),
-            recipient:recipient.to_string(), subject:"EMA email connection test".into(),
+            recipient:recipient.to_string(), subject:text(language,"[EMA][连接测试] 邮件发送验证","[EMA][Connection test] Email delivery check").into(),
             in_reply_to:String::new(), references:String::new(),
-            body:"This is a connection test from EMA. No agent task was created.\n".into(), attempts:0,
+            body:fmt::render(language, text(language,"这是 EMA 邮件发送测试，未创建 Agent 任务。","This is an EMA delivery test. No Agent task was created."),
+                &[(text(language,"发送时间","Sent at"), &chrono::Utc::now().to_rfc3339())],
+                &[(text(language,"验证范围","Scope"),text(language,"收到此邮件可确认本次 SMTP 投递；不代表入站轮询或 Agent 执行已验证。","Receipt confirms this SMTP delivery only. Inbound polling and Agent execution are not verified."))],
+                text(language,"无需回复；请在 EMA 查看发送记录。","No reply needed. Check delivery history in EMA."), &[]), attempts:0,
             kind:"test".to_string(),
         };
-        self.lock()?.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,state,created_at)
-            VALUES(?1,?2,?3,?4,'','',?5,'test',?6,'sending',strftime('%s','now'))",
+        outgoing.body=fmt::envelope("test",&outgoing.message_id,&outgoing.body);
+        self.lock()?.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,state,created_at,kind)
+            VALUES(?1,?2,?3,?4,'','',?5,'test',?6,'sending',strftime('%s','now'),'test')",
             params![outgoing.id,outgoing.message_id,outgoing.recipient,outgoing.subject,outgoing.body,mailbox])?;
         Ok(outgoing)
     }

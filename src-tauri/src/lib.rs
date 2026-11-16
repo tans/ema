@@ -94,7 +94,7 @@ async fn send_test_mail(state: tauri::State<'_, Arc<Gateway>>, recipient: String
     check.enabled = false;
     check.validate().map_err(|e| e.to_string())?;
     let password = secret("mail").map_err(|e| e.to_string())?;
-    let outgoing = state.database.queue_connection_test(&cfg.mail.address, &address).map_err(|e|e.to_string())?;
+    let outgoing = state.database.queue_connection_test(&cfg.mail.address, &address, &cfg.language).map_err(|e|e.to_string())?;
     let id = outgoing.id.clone();
     let mail_config = cfg.mail.clone();
     let pass = password.clone();

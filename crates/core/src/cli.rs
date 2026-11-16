@@ -89,7 +89,7 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
             }
         }
         if answer.trim().is_empty() {bail!("OpenCode completed without a final response");}
-        return Ok(answer.chars().take(12000).collect());
+        return Ok(crate::email_format::excerpt(&answer, crate::email_format::RESULT_LIMIT, &cfg.language));
     }
     if matches!(session.agent.as_str(),"pi"|"omp") {
         let id=session.agent_session.as_deref().context("the original session ID is missing")?;
@@ -108,7 +108,7 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         let output=tokio::time::timeout(Duration::from_secs(900),cmd.output()).await
             .context("Agent exceeded 15-minute execution timeout")??;
         if !output.status.success() {bail!("{} failed: {}",session.agent,String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
-        let answer=String::from_utf8_lossy(&output.stdout).chars().take(12000).collect::<String>();
+        let answer=crate::email_format::excerpt(&String::from_utf8_lossy(&output.stdout), crate::email_format::RESULT_LIMIT, &cfg.language);
         if answer.trim().is_empty() {bail!("Agent completed without a final response");}
         return Ok(answer);
     }
@@ -147,11 +147,11 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
             .map(|v|!v.is_null()).unwrap_or(false) {
         bail!("Agent reported an unsuccessful result");
     }
-    let answer=match session.agent.as_str(){
+    let answer=crate::email_format::excerpt(match session.agent.as_str(){
         "cc"=>data.get("result").and_then(|v|v.as_str()),
         "gemini"=>data.get("response").and_then(|v|v.as_str()),
         _=>None
-    }.unwrap_or("").chars().take(12000).collect::<String>();
+    }.unwrap_or(""), crate::email_format::RESULT_LIMIT, &cfg.language);
     if let Some(id)=data.get("session_id").and_then(|v|v.as_str()){
         if !id.trim().is_empty(){db.set_agent_session(&session.id,id)?;}
     }

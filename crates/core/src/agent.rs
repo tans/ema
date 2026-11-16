@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use crate::email_format::{self as fmt, text};
 use std::{process::Stdio, sync::Arc, time::{Duration, Instant}};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::Command};
 use crate::{config::Settings, db::{Database, Job, Session}};
@@ -79,7 +80,7 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
                                 if let Some(item) = value.get("item") {
                                     if item.get("type").and_then(|v|v.as_str()) == Some("agent_message") {
                                         if let Some(text) = item.get("text").and_then(|v|v.as_str()) {
-                                            final_text = text.chars().take(12_000).collect();
+                                            final_text = fmt::excerpt(text, fmt::RESULT_LIMIT, &config.language);
                                         }
                                     }
                                     db.event(&job.id, kind,
@@ -106,9 +107,13 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
                 if due {
                     let quiet = last_event.elapsed().as_secs();
                     let observed = if quiet > 600 {
-                        format!("Agent process still running; no new activity for {} minutes.", quiet / 60)
-                    } else { format!("Last observed Agent activity {} seconds ago.", quiet) };
-                    let text = format!("Task still running ({} minutes).\n{}\n\nThis is an automated status update, not a completion report.", minutes, observed);
+                        format!("{} {}", text(&config.language,"未观察到新活动的分钟数：","Minutes since last activity:"), quiet / 60)
+                    } else { format!("{} {}", text(&config.language,"距最近活动的秒数：","Seconds since last activity:"), quiet) };
+                    let current = db.session(&session.id)?;
+                    let summary = format!("{} {minutes} {}", text(&config.language,"任务已运行","Task has been running for"), text(&config.language,"分钟，Agent 进程仍在运行。","minutes; the Agent process is still running."));
+                    let text = fmt::task_report(&config.language,&current,&job.id,&summary,text(&config.language,"运行中","Running"),
+                        &[(text(&config.language,"观察信息","Observed activity"), &observed)],
+                        text(&config.language,"请等待结果邮件；此通知不代表任务完成。可直接回复补充要求。","Wait for the result email. This update does not confirm completion. Reply with additional instructions if needed."));
                     db.queue_reply(&session.id, &config.mail.address, &text, "progress")?;
                 }
             }
@@ -117,6 +122,6 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     let exit = child.wait().await?;
     let errors = stderr_handle.await.unwrap_or_default();
     if !exit.success() { anyhow::bail!("Codex failed: {}. {}",exit,errors.chars().take(1000).collect::<String>()); }
-    if final_text.is_empty() { final_text = "Codex finished without a final text response. Check local logs.".into(); }
+    if final_text.is_empty() { final_text = text(&config.language,"本轮已结束，但未获取最终回复。请检查本地日志。","This round ended without a final response. Check local logs.").into(); }
     Ok(final_text)
 }

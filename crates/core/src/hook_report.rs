@@ -1,23 +1,16 @@
 //! Human-readable reports for local Agent completion events.
 use serde_json::Value;
+use crate::email_format::{self as fmt, text};
 use std::{collections::VecDeque, fs::{self, File}, io::{BufRead, BufReader, Seek, SeekFrom}, path::{Path, PathBuf}};
 
 fn field<'a>(v: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter().filter_map(|key| v.get(*key).and_then(Value::as_str))
         .find(|text| !text.trim().is_empty()).unwrap_or("")
 }
-fn excerpt(text: &str, limit: usize, zh: bool) -> String {
-    let text: String = text.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
-    let text = text.trim();
-    let mut chars = text.chars();
-    let prefix: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        format!("{}{}", prefix.trim_end(), if zh { "\n…（内容已截断）" } else { "\n… (truncated)" })
-    } else { prefix }
+fn excerpt(value: &str, limit: usize, zh: bool) -> String {
+    fmt::excerpt(value, limit, if zh { "zh-CN" } else { "en" })
 }
-fn single_line(text: &str, limit: usize) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").chars().filter(|c| !c.is_control()).take(limit).collect()
-}
+fn single_line(value: &str, limit: usize) -> String { fmt::single_line(value, limit) }
 fn content(v: &Value) -> String {
     if let Some(s) = v.as_str() { return s.to_owned(); }
     v.as_array().into_iter().flatten().filter_map(|part| {
@@ -180,15 +173,13 @@ pub(super) fn format(agent: &str, ev: &agent_hooks::event::NormalizedEvent, lang
     let zh = language == "zh-CN";
     let failed = matches!(ev.status, EventStatus::Failed);
     let interrupted = matches!(ev.status, EventStatus::Interrupted);
-    let state = if zh { if interrupted { "已中断" } else if failed { "失败" } else { "已完成" } }
-        else if interrupted { "Interrupted" } else if failed { "Failed" } else { "Completed" };
+    let state = if zh { if interrupted { "已中断" } else if failed { "失败" } else { "本轮结束" } }
+        else if interrupted { "Interrupted" } else if failed { "Failed" } else { "Round ended" };
     let session_title = single_line(&title, 100);
     let title = if session_title.is_empty() { single_line(&task, 100) } else { session_title.clone() };
-    let report_label = if zh { "EMA 报告" } else { "EMA Report" };
-    let subject = if title.is_empty() { format!("{report_label} | {} | {state}", agent.to_ascii_uppercase()) }
-        else { format!("{report_label} | {} | {title}", agent.to_ascii_uppercase()) };
-    let mut answer = excerpt(&ev.response, 2000, zh);
-    let mut task = excerpt(&task, 4000, zh);
+    let subject = fmt::single_line(&format!("[EMA][{}][{state}] {}", agent.to_ascii_uppercase(), if project.is_empty() { title } else { format!("{} · {}",single_line(project,40),title) }), 100);
+    let mut answer = excerpt(&ev.response, fmt::RESULT_LIMIT, zh);
+    let mut task = excerpt(&task, fmt::TASK_LIMIT, zh);
     let truncated = if zh { "\n…（内容已截断）" } else { "\n… (truncated)" };
     if ev.response_truncated && !answer.ends_with(truncated) { answer.push_str(truncated); }
     if ev.prompt_truncated && !task.ends_with(truncated) { task.push_str(truncated); }
@@ -203,21 +194,20 @@ pub(super) fn format(agent: &str, ev: &agent_hooks::event::NormalizedEvent, lang
         }).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n\n");
         excerpt(&messages, 2200, zh)
     };
-    let session_label: String = session.chars().filter(|c| !c.is_control()).take(2048).collect();
-    let project = single_line(project, 100);
-    let empty = if zh { "未提供" } else { "Unavailable" };
-    let no_answer = if zh { "未提供最终回复。" } else { "Final response unavailable." };
-    // Keep an empty machine-readable Session value when the native ID is absent.
-    let session_line = if session_label.is_empty() {
-        if zh { "\n会话：未提供" } else { "\nSession unavailable." }
-    } else { "" };
-    let mut body = if zh {
-        format!("Agent: {agent}\n状态：{state}\n项目：{}\nSession: {}{}\n\n问题：\n{}", if project.is_empty(){empty}else{&project}, session_label, session_line, if task.is_empty(){empty}else{&task})
+    let next = if session.is_empty() {
+        text(language,"未获取 Agent 会话 ID，无法通过回复续接；请在原应用中继续。","No Agent session ID is available. Continue in the original application.")
+    } else if crate::cli::resume_supported(agent) || agent == "alma" || (agent == "claude" && crate::cli::resume_supported("cc")) {
+        text(language,"可直接回复继续此会话；本轮结束不代表所有目标均已完成。","Reply to continue this session. A round ending does not confirm every goal is achieved.")
     } else {
-        format!("Agent: {agent}\nStatus: {state}\nProject: {}\nSession: {}{}\n\nQuestion:\n{}", if project.is_empty(){empty}else{&project}, session_label, session_line, if task.is_empty(){empty}else{&task})
+        text(language,"EMA 暂不支持此 Agent 的邮件续接，请在原应用中继续。","EMA cannot resume this Agent by email yet. Continue in the original application.")
     };
-    if !session_title.is_empty() { body.push_str(&format!("\n\n{} {}", if zh {"会话标题："} else {"Session title:"}, session_title)); }
-    body.push_str(&format!("\n\n{}\n{}", if zh {"上下文："} else {"Context:"}, if context.is_empty(){empty}else{&context}));
-    body.push_str(&format!("\n\n{}\n{}", if zh {"执行结果："} else {"Result:"}, if answer.is_empty(){no_answer}else{&answer}));
+    let body = fmt::render(language,
+        text(language,"收到本地 Agent 的会话报告。","A local Agent session report was received."),
+        &[(text(language,"状态","Status"),state), ("Agent",agent),
+          (text(language,"项目","Project"),&project), (text(language,"运行目录","Working directory"),cwd)],
+        &[(text(language,"本次指令","Instruction"), if task.is_empty() { text(language,"未获取","Unavailable") } else { &task }),
+          (text(language,"近期上下文","Recent context"), &context),
+          (text(language,"Agent 回复","Agent response"), if answer.is_empty() { text(language,"未获取最终回复。","Final response unavailable.") } else { &answer })],
+        next, &[(text(language,"Agent 会话 ID","Agent session ID"),&session)]);
     Some((session, subject, body))
 }

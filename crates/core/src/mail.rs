@@ -51,7 +51,7 @@ fn archive_text(part: &ParsedMail<'_>, mimetype: &str) -> Result<String> {
     }
     Ok(String::new())
 }
-fn redact_access_codes(text: &str) -> String {
+pub(crate) fn redact_access_codes(text: &str) -> String {
     text.split('\n').map(|line| {
         if let Some(pos) = line.to_ascii_lowercase().find("ema-code:") {
             format!("{}EMA-Code: [redacted]", &line[..pos])
@@ -174,6 +174,7 @@ pub fn acknowledge(c:&MailSettings,pass:&str,uids:&[u32])->Result<()> {
     Ok(())
 }
 pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
+    if !crate::email_format::KINDS.contains(&o.kind.as_str()) { bail!("invalid outbound mail kind: {}", o.kind); }
     let from:Mailbox=c.address.parse()?;
     let to:Mailbox=o.recipient.parse()?;
     let mut builder=Message::builder().from(from).to(to).subject(&o.subject)
@@ -182,8 +183,9 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     if !o.references.is_empty() { builder=builder.references(o.references.clone()); }
     // Self-identification headers: survive QQ Mail's Message-ID rewrite so our own
     // outbound mail coming back into the INBOX can be recognized and dropped as echo.
-    let msg = builder.body(o.body.clone())?;
+    let msg = builder.body(crate::email_format::envelope(&o.kind,&o.message_id,&o.body))?;
     let mut msg = msg;
+    msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Version"), "1".into()));
     if !o.kind.is_empty() {
         msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Kind"), o.kind.clone()));
     }
