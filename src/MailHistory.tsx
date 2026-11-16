@@ -20,7 +20,7 @@ const copy = {
   "zh-CN": {
     title: "邮件", back: "返回列表", metadata: "邮件信息", description: "查看 EMA 轮询到的新邮件和发出的邮件。记录保存在本机。",
     search: "搜索主题、正文、邮箱或邮件 ID", refresh: "刷新", loading: "正在加载邮件记录…",
-    empty: "还没有邮件记录", noMatches: "没有找到匹配的邮件", emptyHelp: "启用收信后，新轮询到的邮件会保存在这里。",
+    empty: "还没有邮件记录", noMatches: "没有找到匹配的邮件", filteredEmpty: "当前过滤条件下没有邮件", filterHint: "打开工具栏的过滤按钮可调整显示的邮件类型。", emptyHelp: "启用收信后，新轮询到的邮件会保存在这里。",
     select: "选择一封邮件查看详情", in: "收件", out: "发件", from: "发件人", to: "收件人", mailbox: "收件邮箱", cc: "抄送", references: "关联邮件 ID", originalDate: "邮件日期",
     recorded: "记录时间", sentAt: "SMTP 接受时间", attempts: "发送尝试", messageId: "邮件 ID",
     content: "邮件正文", lastError: "最近一次发送错误", noBody: "没有可显示的正文", unknown: "未知", noSubject: "（无主题）",
@@ -49,7 +49,7 @@ const copy = {
   en: {
     title: "Mail", back: "Back to list", metadata: "Message information", description: "Review new mail polled and sent by EMA. Records stay on this device.",
     search: "Search subject, body, address or message ID", refresh: "Refresh", loading: "Loading mail history…",
-    empty: "No mail records yet", noMatches: "No matching mail", emptyHelp: "Newly polled mail appears here after receiving is enabled.",
+    empty: "No mail records yet", noMatches: "No matching mail", filteredEmpty: "No mail under the current filters", filterHint: "Use the filter button in the toolbar to adjust which mail types are shown.", emptyHelp: "Newly polled mail appears here after receiving is enabled.",
     select: "Select a message to see its details", in: "Received", out: "Sent", from: "From", to: "To", mailbox: "Mailbox", cc: "Cc", references: "Related message IDs", originalDate: "Message date",
     recorded: "Recorded", sentAt: "Accepted by SMTP", attempts: "Send attempts", messageId: "Message ID",
     content: "Message body", lastError: "Most recent send error", noBody: "No body available", unknown: "Unknown", noSubject: "(No subject)",
@@ -77,7 +77,8 @@ const copy = {
   }
 };
 
-export default function MailHistory({ language, search, version }: { language: "zh-CN" | "en"; search: string; version: number }) {
+export default function MailHistory({ language, search, version, hiddenKinds = {} }:
+  { language: "zh-CN" | "en"; search: string; version: number; hiddenKinds?: Record<string, boolean> }) {
   const t = copy[language];
   const [page, setPage] = useState(0);
   const [replyVersion, setReplyVersion] = useState(0);
@@ -105,7 +106,8 @@ export default function MailHistory({ language, search, version }: { language: "
     return () => { current = false; window.clearTimeout(timer); };
   }, [search, page, version, replyVersion]);
 
-  const selectedMail = rows.slice(0, 50).find(item => item.id === selected);
+  const filteredRows = rows.filter(mail => !hiddenKinds[mail.kind]);
+  const selectedMail = filteredRows.slice(0, 50).find(item => item.id === selected);
   const date = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language) : t.unknown;
   const status = (mail: MailRecord) => {
     const key = mail.status === "queued" ? `queued_${mail.direction}` : mail.status;
@@ -127,12 +129,12 @@ export default function MailHistory({ language, search, version }: { language: "
   return <section className="history-page" aria-label={t.title}>
     {error && <p className="history-error" role="alert">{t.failed} {error}</p>}
     {loading && rows.length === 0 && <p className="history-message" role="status">{t.loading}</p>}
-    {!loading && !error && rows.length === 0 && <div className="history-message"><strong>{search ? t.noMatches : t.empty}</strong>
-      {!search && <p>{t.emptyHelp}</p>}</div>}
-    {!error && rows.length > 0 && <>
+    {!loading && !error && filteredRows.length === 0 && <div className="history-message"><strong>{rows.length > 0 ? t.filteredEmpty : (search ? t.noMatches : t.empty)}</strong>
+      {rows.length > 0 ? <p>{t.filterHint}</p> : (!search && <p>{t.emptyHelp}</p>)}</div>}
+    {!error && filteredRows.length > 0 && <>
       <div className={"history-layout " + (selectedMail ? "reading" : "")}>
         <div className="history-list" aria-label={t.title}>
-          {rows.slice(0, 50).map(mail => <button type="button" key={mail.id}
+          {filteredRows.slice(0, 50).map(mail => <button type="button" key={mail.id}
             className={"history-row " + (mail.id === selected ? "selected" : "")}
             aria-pressed={mail.id === selected} onClick={() => setSelected(mail.id)}>
             <span className="history-row-top"><strong>{mail.subject || t.noSubject}</strong>{badge(mail)}<time title={date(mail.created_at)}>{shortDate(mail.created_at)}</time></span>
@@ -164,7 +166,7 @@ export default function MailHistory({ language, search, version }: { language: "
       </div>
       <div className="history-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={page === 0} onClick={() => setPage(page - 1)}>{t.previous}</button>
         <span>{t.page} {page + 1} {t.pageEnd}</span>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={rows.length <= 50} onClick={() => setPage(page + 1)}>{t.next}</button></div>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={filteredRows.length <= 50} onClick={() => setPage(page + 1)}>{t.next}</button></div>
     </>}
   </section>;
 }

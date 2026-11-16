@@ -32,6 +32,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .app .btn-ghost:hover:not(:disabled) { background: #f4f5f7; }
 .app .btn-square { padding: 5px; width: 28px; }
 .app .settings-button { color: var(--ema-muted); }
+.header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.filter-wrap { position: relative; display: flex; }
+.app .filter-button { color: var(--ema-muted); }
+.app .filter-button.filter-active { color: #245cb1; background: #eaf1ff; }
+.filter-backdrop { position: fixed; inset: 0; z-index: 40; }
+.filter-popover { position: absolute; right: 0; top: calc(100% + 8px); z-index: 50; width: 220px; max-height: 70vh; overflow: auto;
+  background: #fff; border: 1px solid #e3e6ea; border-radius: 8px; box-shadow: 0 10px 30px rgba(20, 30, 40, 0.14);
+  padding: 10px 12px; }
+.filter-title { font-size: 12px; font-weight: 600; margin: 0 0 2px; color: #24272c; }
+.filter-hint { font-size: 11px; color: var(--ema-muted); margin: 0 0 8px; line-height: 1.5; }
+.filter-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 2px; color: #31363d; cursor: pointer; }
+.filter-row input { margin: 0; accent-color: #245cb1; }
 .app .back-button { padding-left: 0; color: var(--ema-muted); }
 .language { background: transparent; padding: 5px; color: var(--ema-muted); max-width: 110px; }
 .app-content { padding: 2px 8px 4px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100svh - 40px); }

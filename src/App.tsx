@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle, Eye, EyeOff, RefreshCw, Search, Settings as SettingsIcon } from "react-feather";
+import { ArrowLeft, CheckCircle, Eye, EyeOff, Filter, RefreshCw, Search, Settings as SettingsIcon } from "react-feather";
 import "daisyui/theme/light.css";
 import "daisyui/components/button.css";
 import "daisyui/components/input.css";
@@ -50,7 +50,12 @@ const labels = {
     hookNotice: "本地 Agent 报告会发送到当前邮箱，可能包含会话问题、上下文和结果。",
     testMail: "发送测试邮件", recipient: "测试收件人", sending: "正在发送…",
     sent: "SMTP 已接受测试邮件，请检查收件箱。", testHint: "向已保存的白名单地址发信；SMTP 接受不代表最终送达。",
-    saveFirst: "请先保存当前设置，再发送测试邮件。", invalidReceiver: "请选择已保存的白名单收件人。"
+    saveFirst: "请先保存当前设置，再发送测试邮件。", invalidReceiver: "请选择已保存的白名单收件人。",
+    filter: "过滤邮件类型", filterKinds: "显示哪些类型的邮件？", filterHint: "默认隐藏回环和无关邮件。",
+    kindLabels: {
+      echo: "回环", unrelated: "无关", new_task: "新任务", resume_task: "继续任务", invalid: "已拒绝",
+      new_task_ack: "新任务回执", resume_ack: "继续回执", progress: "进度", result: "结果", error: "错误", hook: "Hook", test: "测试", legacy: "历史"
+    }
   },
   en: {
     search: "Search mail", refresh: "Refresh mail", settings: "Settings", back: "Back to mail", loginMail: "Connect mailbox", language: "Language",
@@ -69,10 +74,18 @@ const labels = {
     hookNotice: "Local Agent reports are emailed to this mailbox and may include questions, context and results.",
     testMail: "Send test email", recipient: "Test recipient", sending: "Sending…",
     sent: "SMTP accepted the test email. Check your inbox.", testHint: "Sends to a saved allowed sender. SMTP acceptance does not guarantee delivery.",
-    saveFirst: "Save the current settings before sending a test email.", invalidReceiver: "Choose a saved allowed sender."
+    saveFirst: "Save the current settings before sending a test email.", invalidReceiver: "Choose a saved allowed sender.",
+    filter: "Filter mail types", filterKinds: "Which mail types to show?", filterHint: "Echo and unrelated mail are hidden by default.",
+    kindLabels: {
+      echo: "Echo", unrelated: "Unrelated", new_task: "New task", resume_task: "Resume", invalid: "Rejected",
+      new_task_ack: "Task ack", resume_ack: "Resume ack", progress: "Progress", result: "Result", error: "Error", hook: "Hook", test: "Test", legacy: "Legacy"
+    }
   }
 };
 const normalizeAllowlist = (raw: string) => Array.from(new Set(raw.split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean)));
+// Mail history kind filter. Echo and unrelated mail are hidden by default.
+const ALL_KINDS = ["echo", "unrelated", "new_task", "resume_task", "invalid", "new_task_ack", "resume_ack", "progress", "result", "error", "hook", "test", "legacy"] as const;
+const DEFAULT_HIDDEN: Record<string, boolean> = { echo: true, unrelated: true };
 
 export default function App() {
   const [settings, setSettings] = useState(initial);
@@ -92,7 +105,10 @@ export default function App() {
   const [testRecipient, setTestRecipient] = useState("");
   const [allowlistText, setAllowlistText] = useState("");
   const [notice, setNotice] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [hiddenKinds, setHiddenKinds] = useState<Record<string, boolean>>({ ...DEFAULT_HIDDEN });
   const [loadError, setLoadError] = useState("");
+  const anyHidden = Object.values(hiddenKinds).some(Boolean);
   const language = settings.language === "en" ? "en" : "zh-CN";
   const t = labels[language];
   const busy = saving || testing || sending;
@@ -172,11 +188,32 @@ export default function App() {
       </label>}
       {view === "settings" ? <select className="language" aria-label={t.language} value={language} disabled={busy}
         onChange={e => patch({ language: e.target.value })}><option value="zh-CN">中文</option><option value="en">English</option></select>
-        : <button type="button" className="btn btn-ghost btn-square settings-button" aria-label={t.settings} title={t.settings} onClick={openSettings}>
-          <SettingsIcon size={19} aria-hidden="true"/>
-        </button>}
+        : <div className="header-actions">
+          {mailboxReady && <>
+            <div className="filter-wrap">
+              <button type="button" className={"btn btn-ghost btn-square filter-button" + (anyHidden ? " filter-active" : "")}
+                aria-label={t.filter} title={t.filter} aria-expanded={filterOpen}
+                onClick={() => setFilterOpen(open => !open)}><Filter size={15} aria-hidden="true"/></button>
+              {filterOpen && <>
+                <div className="filter-backdrop" onClick={() => setFilterOpen(false)}/>
+                <div className="filter-popover" role="dialog" aria-label={t.filterKinds}>
+                  <p className="filter-title">{t.filterKinds}</p>
+                  <p className="filter-hint">{t.filterHint}</p>
+                  {ALL_KINDS.map(kind => <label className="filter-row" key={kind}>
+                    <input type="checkbox" checked={!hiddenKinds[kind]} onChange={() =>
+                      setHiddenKinds(hidden => ({ ...hidden, [kind]: !hidden[kind] }))}/>
+                    <span>{t.kindLabels[kind] ?? kind}</span>
+                  </label>)}
+                </div>
+              </>}
+            </div>
+          </>}
+          <button type="button" className="btn btn-ghost btn-square settings-button" aria-label={t.settings} title={t.settings} onClick={openSettings}>
+            <SettingsIcon size={19} aria-hidden="true"/>
+          </button>
+        </div>}
     </header>
-    {view === "history" ? mailboxReady ? <div className="app-content"><MailHistory language={language} search={search} version={version}/></div>
+    {view === "history" ? mailboxReady ? <div className="app-content"><MailHistory language={language} search={search} version={version} hiddenKinds={hiddenKinds}/></div>
       : <div className="login-gate"><button type="button" className="btn login-button" onClick={openSettings}>{t.loginMail}</button>
       </div>
       : <div className="settings-page">
