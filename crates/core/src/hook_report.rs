@@ -177,7 +177,15 @@ pub(super) fn format(agent: &str, ev: &agent_hooks::event::NormalizedEvent, lang
         else if interrupted { "Interrupted" } else if failed { "Failed" } else { "Round ended" };
     let session_title = single_line(&title, 100);
     let title = if session_title.is_empty() { single_line(&task, 100) } else { session_title.clone() };
-    let subject = fmt::single_line(&format!("[EMA][{}][{state}] {}", agent.to_ascii_uppercase(), if project.is_empty() { title } else { format!("{} · {}",single_line(project,40),title) }), 100);
+    // Subject convention (HUMAN_HANDBOOK): [folder][agent][status] title.
+    // folder is the working-directory folder name, never the full path.
+    let folder = single_line(project, 40);
+    let prefix = if folder.is_empty() {
+        format!("[{}][{state}]", agent.to_ascii_uppercase())
+    } else {
+        format!("[{folder}][{}][{state}]", agent.to_ascii_uppercase())
+    };
+    let subject = fmt::single_line(&format!("{prefix} {title}"), 100);
     let mut answer = excerpt(&ev.response, fmt::RESULT_LIMIT, zh);
     let mut task = excerpt(&task, fmt::TASK_LIMIT, zh);
     let truncated = if zh { "\n…（内容已截断）" } else { "\n… (truncated)" };

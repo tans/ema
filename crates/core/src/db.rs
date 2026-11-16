@@ -538,7 +538,7 @@ impl Database {
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let mut outgoing=Outbound {
             id:Uuid::new_v4().to_string(), message_id:format!("<ema-test-{}@{}>",Uuid::new_v4(),domain),
-            recipient:recipient.to_string(), subject:text(language,"[EMA][连接测试] 邮件发送验证","[EMA][Connection test] Email delivery check").into(),
+            recipient:recipient.to_string(), subject:text(language,"[连接测试] 邮件发送验证","[Connection test] Email delivery check").into(),
             in_reply_to:String::new(), references:String::new(),
             body:fmt::render(language, text(language,"这是 EMA 邮件发送测试，未创建 Agent 任务。","This is an EMA delivery test. No Agent task was created."),
                 &[(text(language,"发送时间","Sent at"), &chrono::Utc::now().to_rfc3339())],
