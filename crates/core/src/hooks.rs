@@ -12,6 +12,34 @@ use agent_hooks::adapter::AgentAdapter;
 
 const MAX_EVENT: u64 = 65_536;
 
+/// Minimal blocking HTTP GET against Alma's local API (127.0.0.1:23001).
+/// Zero-dependency on purpose: hook collection must not block on TLS or a
+/// client stack. Returns the decoded JSON body on success.
+fn alma_http_get(port: u16, path: &str) -> Option<serde_json::Value> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(800))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_millis(800))).ok()?;
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").ok()?;
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let body = text.find("\r\n\r\n").map(|at| &text[at + 4..])?;
+    serde_json::from_str(body).ok()
+}
+
+/// Resolve the working directory of an Alma thread through its workspace.
+/// Detached or temporary sessions without a workspace yield None.
+pub fn alma_workspace_path(thread_id: &str) -> Option<String> {
+    let thread = alma_http_get(23001, &format!("/api/threads/{thread_id}"))?;
+    let workspace = thread.get("workspaceId")?.as_str()?;
+    let info = alma_http_get(23001, &format!("/api/workspaces/{workspace}"))?;
+    let path = info.get("path")?.as_str()?.trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
+
 fn hook_dir(root: &Path) -> PathBuf { root.join("hooks") }
 fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() }
 
@@ -112,9 +140,17 @@ fn drain(root: &Path, cfg: &Settings, db: &Database) -> Result<()> {
             }
         };
         // Reduce through the adapter registry; unrecognized wire types are dropped.
-        let Some(ev) = adapter.normalize(&v) else {
+        let Some(mut ev) = adapter.normalize(&v) else {
             let _ = fs::remove_file(&path); continue;
         };
+        // Alma's hook payload does not carry the working directory. Recover the
+        // thread's workspace path from the local Alma API so reports are titled
+        // [folder][alma][status] like every other agent.
+        if agent == "alma" && ev.cwd.trim().is_empty() && !ev.session_id.is_empty() {
+            if let Some(path) = alma_workspace_path(&ev.session_id) {
+                ev.cwd = path;
+            }
+        }
         let Some((session, subject, body)) = report::format(agent, &ev, &cfg.language) else {
             let _ = fs::remove_file(&path); continue;
         };
