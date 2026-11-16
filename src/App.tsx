@@ -1,11 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import {
-  ArrowLeft, ArrowRight, Check, CheckCircle, ChevronDown, HelpCircle,
-  Mail, Sliders, Shield, Send, Activity, Eye, EyeOff
-} from "react-feather";
+import { ArrowLeft, CheckCircle, Eye, EyeOff, RefreshCw, Search, Settings as SettingsIcon } from "react-feather";
+import "daisyui/theme/light.css";
+import "daisyui/components/button.css";
+import "daisyui/components/input.css";
 import "./style.css";
-import { Archive } from "react-feather";
 import MailHistory from "./MailHistory";
 
 type MailSettings = {
@@ -15,446 +14,242 @@ type MailSettings = {
 type AgentRoute = { agent: string; prefix: string; enabled: boolean };
 type Settings = {
   language: string; mail: MailSettings;
-  router: { base_url: string; model: string };
-  agent_routes: AgentRoute[];
+  router: { base_url: string; model: string }; agent_routes: AgentRoute[];
   allowlist: string[]; projects: { alias: string; path: string }[];
   codex_command: string; workspace_write: boolean;
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean; onboarding_completed: boolean;
 };
-type View = "welcome" | "settings" | "history";
-type Step = 1 | 2 | 3;
 type SettingsTab = "mail" | "allowlist" | "agents";
-
 const agentNames = ["codex", "cc", "opencode", "pi", "omp", "zcode", "kimi", "dsh", "hermes", "openclaw", "gemini"];
 const qqMail = (address: string): MailSettings => ({
   provider: "qq", address, username: address, imap_host: "imap.qq.com",
   imap_port: 993, smtp_host: "smtp.qq.com", smtp_port: 465
 });
 const initial: Settings = {
-  language: "zh-CN", mail: qqMail(""),
-  router: { base_url: "https://api.openai.com/v1", model: "" },
+  language: "zh-CN", mail: qqMail(""), router: { base_url: "https://api.openai.com/v1", model: "" },
   agent_routes: agentNames.map(agent => ({ agent, prefix: agent, enabled: true })),
   allowlist: [], projects: [], codex_command: "codex", workspace_write: false,
-  poll_seconds: 30, progress_minutes: [10, 30, 60],
-  enabled: false, onboarding_completed: false
+  poll_seconds: 30, progress_minutes: [10, 30, 60], enabled: false, onboarding_completed: false
 };
-
 const labels = {
   "zh-CN": {
-    language: "语言", skipAll: "跳过引导", skipStep: "跳过此步", back: "上一步",
-    settings: "设置", history: "邮件记录", setup: "初始设置", step: "步骤",
-    emailStep: "连接邮箱", allowStep: "设置白名单", testStep: "发送测试邮件",
-    emailDesc: "连接日常邮箱，授权码会以明文保存在本机用户目录。",
-    allowDesc: "只有下列邮箱地址发来的任务才允许进入 Agent。",
-    testDesc: "向白名单邮箱发送一封测试邮件，确认 SMTP 发信正常。",
-    qq: "QQ 邮箱", other: "其他邮箱", email: "邮箱", address: "邮箱地址",
-    login: "登录用户名", auth: "授权码", password: "应用密码",
-    authPlaceholder: "输入 QQ 邮箱授权码", keepSecret: "留空则使用已保存的凭据",
-    secretStorage: "授权码以明文存于用户目录的 .ema/secrets.json；macOS 和 Linux 文件仅当前用户可读写。",
-    imap: "IMAP 服务器", smtp: "SMTP 服务器", port: "端口",
-    getCode: "获取授权码", checkConnection: "测试连接",
-    checking: "正在验证…", connected: "IMAP 连接成功",
-    next: "保存并继续", allowSave: "保存白名单并继续",
-    senders: "允许发信的邮箱", senderHelp: "一行一个邮箱地址，可添加多个。",
-    chooseReceiver: "测试收件人", sendTest: "发送测试邮件",
-    sending: "正在发送…", sent: "SMTP 已接受测试邮件，请检查收件箱。",
-    testNoDelivery: "发信成功不代表邮件一定投递或已被收到。",
-    finish: "完成", finishEnable: "完成并启用 EMA", finishSkip: "完成但暂不启用",
-    running: "已启用", paused: "未启用",
-    mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时汇报到当前邮箱。邮件可能包含会话标题、用户问题、近期对话和执行结果，请注意其中的敏感信息。",
-    unavailable: "未检测到", available: "可用",
-    routes: "邮件主题前缀", notSupported: "全部前缀默认生效。当前支持 Codex、Claude Code、Gemini 执行，其他 Agent 会自动邮件回复不支持的原因。",
-    enabled: "启用邮件 Agent",
-    save: "保存设置", saving: "保存中…",
-    saved: "设置已保存", error: "操作失败",
-    missingEmail: "请先填写邮箱地址和授权码并验证连接",
-    missingSecret: "未找到本地邮箱授权码，请在邮箱设置中填写；在此之前无法收发邮件。",
-    missingAllow: "请添加至少一个白名单邮箱，或跳过此步",
-    invalidReceiver: "请选择已保存的白名单收件人",
-    reopenGuide: "重新打开引导", refresh: "刷新 Agent 检测",
-    continue: "继续", enabledHint: "须正确配置邮箱和白名单后才能启用。",
-    ready: "配置已完成", secure: "仅允许白名单和主题前缀匹配的任务"
+    search: "搜索邮件", refresh: "刷新邮件", settings: "设置", back: "返回邮件", loginMail: "登录邮箱", language: "语言",
+    mailbox: "邮箱", senders: "允许发信的邮箱", agents: "Agent",
+    qq: "QQ 邮箱", other: "其他邮箱", address: "邮箱地址", username: "登录用户名",
+    imap: "IMAP 服务器", smtp: "SMTP 服务器", port: "端口", auth: "授权码", password: "应用密码",
+    secretPlaceholder: "输入邮箱授权码或应用密码", keepSecret: "已保存，留空保持现有凭据",
+    showSecret: "显示授权码", hideSecret: "隐藏授权码", getCode: "获取 QQ 邮箱授权码",
+    secretStorage: "凭据以明文存于本机 .ema/secrets.json；macOS 和 Linux 文件仅当前用户可读写。",
+    testConnection: "测试连接", checking: "正在验证…", connected: "IMAP 连接成功",
+    save: "保存设置", saving: "保存中…", saved: "设置已保存", error: "操作失败",
+    missingEmail: "请填写邮箱地址和授权码。", missingSecret: "请补充邮箱凭据后登录。",
+    senderHelp: "一行一个邮箱。只有这些地址发来的邮件可以创建或继续任务。",
+    enabled: "接收邮件任务", enabledHint: "先保存邮箱和允许发信的地址，再启用邮件任务。",
+    prefixes: "邮件主题前缀", prefixHelp: "当前支持 Codex、Claude Code、Gemini 执行；其他 Agent 会回复不支持的原因。",
+    hookNotice: "本地 Agent 报告会发送到当前邮箱，可能包含会话问题、上下文和结果。",
+    testMail: "发送测试邮件", recipient: "测试收件人", sending: "正在发送…",
+    sent: "SMTP 已接受测试邮件，请检查收件箱。", testHint: "向已保存的白名单地址发信；SMTP 接受不代表最终送达。",
+    saveFirst: "请先保存当前设置，再发送测试邮件。", invalidReceiver: "请选择已保存的白名单收件人。"
   },
   en: {
-    language: "Language", skipAll: "Skip setup", skipStep: "Skip this step", back: "Back",
-    settings: "Settings", history: "Mail history", setup: "Get started", step: "Step",
-    emailStep: "Connect email", allowStep: "Sender allowlist", testStep: "Send a test email",
-    emailDesc: "Connect your everyday mailbox. Your app password is stored as plain text in your local user directory.",
-    allowDesc: "Only these email addresses may submit tasks to an Agent.",
-    testDesc: "Send a real SMTP test email to an allowed address.",
-    qq: "QQ Mail", other: "Other email", email: "Mailbox", address: "Email address",
-    login: "Login username", auth: "Authorization code", password: "App password",
-    authPlaceholder: "Enter QQ Mail authorization code", keepSecret: "Leave blank to use the stored credential",
-    secretStorage: "The password is stored as plain text in .ema/secrets.json in your user directory; on macOS and Linux the file is owner-only.",
-    imap: "IMAP server", smtp: "SMTP server", port: "Port",
-    getCode: "Get authorization code", checkConnection: "Test connection",
-    checking: "Checking…", connected: "IMAP connection successful",
-    next: "Save and continue", allowSave: "Save allowlist and continue",
-    senders: "Allowed senders", senderHelp: "One address per line. Multiple addresses are supported.",
-    chooseReceiver: "Test recipient", sendTest: "Send test email",
-    sending: "Sending…", sent: "SMTP accepted the test email. Check your inbox.",
-    testNoDelivery: "SMTP acceptance does not guarantee delivery or receipt.",
-    finish: "Finish", finishEnable: "Finish and enable EMA", finishSkip: "Finish without enabling",
-    running: "Enabled", paused: "Disabled",
-    mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails reports to this mailbox while running. Reports may contain sensitive session titles, questions, recent conversation and results.",
-    unavailable: "Not found", available: "Available",
-    routes: "Subject prefixes", notSupported: "All prefixes are active. Codex, Claude Code and Gemini run; other agents receive an explanatory email.",
-    enabled: "Enable email Agent",
-    save: "Save settings", saving: "Saving…",
-    saved: "Settings saved", error: "Action failed",
-    missingEmail: "Enter your mailbox and validate the connection",
-    missingSecret: "No local mailbox password was found. Enter it in email settings to resume sending and receiving mail.",
-    missingAllow: "Add at least one allowed sender or skip this step",
-    invalidReceiver: "Choose a saved allowlist recipient",
-    reopenGuide: "Open setup guide", refresh: "Scan Agents",
-    continue: "Continue", enabledHint: "A mailbox and allowed sender are required to enable the gateway.",
-    ready: "Setup complete", secure: "Only allowed senders with matching prefixes can start tasks"
+    search: "Search mail", refresh: "Refresh mail", settings: "Settings", back: "Back to mail", loginMail: "Connect mailbox", language: "Language",
+    mailbox: "Mailbox", senders: "Allowed senders", agents: "Agents",
+    qq: "QQ Mail", other: "Other email", address: "Email address", username: "Login username",
+    imap: "IMAP server", smtp: "SMTP server", port: "Port", auth: "Authorization code", password: "App password",
+    secretPlaceholder: "Enter your authorization code or app password", keepSecret: "Saved; leave blank to keep it",
+    showSecret: "Show password", hideSecret: "Hide password", getCode: "Get QQ Mail authorization code",
+    secretStorage: "Credentials are stored as plain text in local .ema/secrets.json; the file is owner-only on macOS and Linux.",
+    testConnection: "Test connection", checking: "Checking…", connected: "IMAP connection successful",
+    save: "Save settings", saving: "Saving…", saved: "Settings saved", error: "Action failed",
+    missingEmail: "Enter your mailbox address and app password.", missingSecret: "Enter your mailbox password to connect.",
+    senderHelp: "One address per line. Only these senders can create or continue tasks.",
+    enabled: "Receive email tasks", enabledHint: "Save a mailbox and allowed senders before enabling email tasks.",
+    prefixes: "Subject prefixes", prefixHelp: "Codex, Claude Code and Gemini run; other Agents receive an explanatory reply.",
+    hookNotice: "Local Agent reports are emailed to this mailbox and may include questions, context and results.",
+    testMail: "Send test email", recipient: "Test recipient", sending: "Sending…",
+    sent: "SMTP accepted the test email. Check your inbox.", testHint: "Sends to a saved allowed sender. SMTP acceptance does not guarantee delivery.",
+    saveFirst: "Save the current settings before sending a test email.", invalidReceiver: "Choose a saved allowed sender."
   }
 };
-
-function normalizeAllowlist(raw: string): string[] {
-  return Array.from(new Set(raw.split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean)));
-}
+const normalizeAllowlist = (raw: string) => Array.from(new Set(raw.split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean)));
 
 export default function App() {
-  const [settings, setSettings] = useState<Settings>(initial);
-  const [view, setView] = useState<View>("welcome");
-  const [step, setStep] = useState<Step>(1);
+  const [settings, setSettings] = useState(initial);
+  const [savedSettings, setSavedSettings] = useState(initial);
+  const [view, setView] = useState<"history" | "settings">("history");
+  const [search, setSearch] = useState("");
+  const [version, setVersion] = useState(0);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("mail");
   const [loading, setLoading] = useState(true);
+  const [mailboxReady, setMailboxReady] = useState(false);
   const [secret, setSecret] = useState("");
-  const [needsMailSecret, setNeedsMailSecret] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
-  const [routesOpen, setRoutesOpen] = useState(false);
-
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
   const [connectionOk, setConnectionOk] = useState(false);
-  const [testSent, setTestSent] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
   const [allowlistText, setAllowlistText] = useState("");
   const [notice, setNotice] = useState("");
+  const [loadError, setLoadError] = useState("");
   const language = settings.language === "en" ? "en" : "zh-CN";
   const t = labels[language];
+  const busy = saving || testing || sending;
+  const dirty = JSON.stringify(settings) !== JSON.stringify(savedSettings) || !!secret.trim();
   const selected = settings.mail.provider === "qq" ? "qq" : "custom";
+
+  useEffect(() => {
+    Promise.all([invoke<Settings>("get_settings"), invoke<boolean>("has_mail_secret")])
+      .then(([value, hasSecret]) => {
+        const resolved = { ...value, mail: value.mail.address || value.mail.imap_host ? value.mail : qqMail("") };
+        setSettings(resolved); setSavedSettings(resolved);
+        setAllowlistText(resolved.allowlist.join("\n"));
+        setTestRecipient(resolved.allowlist[0] ?? "");
+        setMailboxReady(!!resolved.mail.address.trim() && hasSecret);
+      }).catch(e => {
+        console.error("Could not load local settings", e);
+        setLoadError("无法读取本地设置，请重新启动 EMA。 / Restart EMA to load local settings.");
+      }).finally(() => setLoading(false));
+  }, []);
 
   function patch(next: Partial<Settings>) { setSettings(s => ({ ...s, ...next })); }
   function patchMail(next: Partial<MailSettings>) {
     setConnectionOk(false);
-    setTestSent(false);
     setSettings(s => ({ ...s, mail: { ...s.mail, ...next } }));
   }
-  function changeProvider(value: string) {
-    setNotice("");
-    patchMail(value === "qq" ? qqMail(settings.mail.address) : { provider: "custom" });
+  function openSettings() { setSettingsTab("mail"); setNotice(""); setView("settings"); }
+  function back() {
+    setSettings(savedSettings); setAllowlistText(savedSettings.allowlist.join("\n"));
+    setSecret(""); setShowSecret(false); setConnectionOk(false); setNotice(""); setView("history");
   }
-  function changeAddress(value: string) {
-    patchMail(selected === "qq" ? { address: value, username: value } : { address: value });
-  }
-
-  useEffect(() => {
-    invoke<Settings>("get_settings").then(async value => {
-      const configured = value.mail.address || value.mail.imap_host;
-      const resolved = { ...value, mail: configured ? value.mail : qqMail("") };
-      setSettings(resolved);
-      setTestRecipient(resolved.allowlist[0] ?? "");
-      setAllowlistText(resolved.allowlist.join("\n"));
-      setView(resolved.onboarding_completed ? "history" : "welcome");
-      if (resolved.mail.address.trim()) setNeedsMailSecret(!(await invoke<boolean>("has_mail_secret")));
-    }).catch(e => setNotice(String(e))).finally(() => setLoading(false));
-    invoke<string>("get_secret", { name: "mail" }).then(v => { if (v) setSecret(v); }).catch(() => {});
-  }, []);
-
-  async function persist(next: Settings, showSaved = false): Promise<boolean> {
-    setSaving(true);
-    setNotice("");
-    try {
-      if (secret.trim()) await invoke("set_secret", { name: "mail", value: secret.trim() });
-      await invoke("save_settings", { settings: next });
-      setNeedsMailSecret(!!next.mail.address.trim() && !(await invoke<boolean>("has_mail_secret")));
-      setSettings(next);
-      setSecret("");
-      if (showSaved) setNotice(t.saved);
-      return true;
-    } catch (e) {
-      setNotice(t.error + ": " + String(e));
-      return false;
-    } finally { setSaving(false); }
-  }
-  async function validateConnection(): Promise<boolean> {
+  async function validateConnection() {
     if (!settings.mail.address.trim()) { setNotice(t.missingEmail); return false; }
-    setTesting(true);
-    setNotice("");
+    setTesting(true); setNotice("");
     try {
       await invoke("check_mail", { settings, password: secret.trim() || null });
-      setConnectionOk(true);
-      setNotice(t.connected);
-      return true;
-    } catch (e) {
-      setConnectionOk(false);
-      setNotice(t.error + ": " + String(e));
-      return false;
-    } finally { setTesting(false); }
+      setConnectionOk(true); setNotice(t.connected); return true;
+    } catch (e) { setConnectionOk(false); setNotice(`${t.error}: ${e}`); return false; }
+    finally { setTesting(false); }
   }
-
-  async function nextEmail() {
-    if (!(await validateConnection())) return;
-    const next = { ...settings, enabled: settings.enabled && settings.allowlist.length > 0 };
-    if (await persist(next)) { setStep(2); setNotice(""); }
-  }
-  async function nextAllowlist() {
-    if (!settings.allowlist.length) { setNotice(t.missingAllow); return; }
-    if (await persist(settings)) {
-      setTestRecipient(settings.allowlist[0] ?? "");
-      setTestSent(false);
-      setStep(3);
-    }
+  async function save() {
+    const connecting = !mailboxReady;
+    if (connecting) setSettingsTab("mail");
+    if ((connecting || JSON.stringify(settings.mail) !== JSON.stringify(savedSettings.mail) || secret.trim())
+        && !(await validateConnection())) return;
+    setSaving(true); setNotice("");
+    try {
+      const next = { ...settings, onboarding_completed: true };
+      if (secret.trim()) await invoke("set_secret", { name: "mail", value: secret.trim() });
+      await invoke("save_settings", { settings: next });
+      const hasSecret = await invoke<boolean>("has_mail_secret");
+      setMailboxReady(!!next.mail.address.trim() && hasSecret);
+      setSettings(next); setSavedSettings(next); setSecret(""); setLoadError("");
+      setTestRecipient(next.allowlist[0] ?? "");
+      if (connecting && hasSecret) setView("history");
+      else setNotice(t.saved);
+    } catch (e) { setNotice(`${t.error}: ${e}`); }
+    finally { setSaving(false); }
   }
   async function sendTest() {
-    if (!settings.allowlist.some(a => a.toLowerCase() === testRecipient.trim().toLowerCase())) {
-      setNotice(t.invalidReceiver); return;
-    }
-    setSending(true);
-    setNotice("");
-    try {
-      await invoke("send_test_mail", { recipient: testRecipient.trim() });
-      setTestSent(true);
-      setNotice(t.sent);
-    } catch (e) {
-      setTestSent(false);
-      setNotice(t.error + ": " + String(e));
-    } finally { setSending(false); }
-  }
-  async function finishGuide(enable = false) {
-    const canEnable = enable && testSent && connectionOk && !!settings.mail.address && settings.allowlist.length > 0;
-    const next = { ...settings, onboarding_completed: true, enabled: canEnable || settings.enabled };
-    if (await persist(next)) { setView("history"); setNotice(""); }
-  }
-  function skipStep() {
-    setNotice("");
-    if (step < 3) {
-      if (step === 2) setTestRecipient(settings.allowlist[0] ?? "");
-      setStep((step + 1) as Step);
-    } else void finishGuide(false);
-  }
-  function openGuide() {
-    setStep(1); setConnectionOk(false); setTestSent(false);
-    setTestRecipient(settings.allowlist[0] ?? "");
-    setNotice(""); setView("welcome");
+    if (dirty) { setNotice(t.saveFirst); return; }
+    if (!savedSettings.allowlist.includes(testRecipient)) { setNotice(t.invalidReceiver); return; }
+    setSending(true); setNotice("");
+    try { await invoke("send_test_mail", { recipient: testRecipient }); setNotice(t.sent); }
+    catch (e) { setNotice(`${t.error}: ${e}`); }
+    finally { setSending(false); }
   }
 
-  function mailboxFields() {
-    return <div className="form-body">
-      <div className="choice">
-        <button type="button" className={selected === "qq" ? "selected" : ""} onClick={() => changeProvider("qq")}>{t.qq}</button>
-        <button type="button" className={selected === "custom" ? "selected" : ""} onClick={() => changeProvider("custom")}>{t.other}</button>
+  if (loading) return <main className="app loading" aria-busy="true">EMA</main>;
+  return <main className={`app app-${view}`}>
+    <header className="header">
+      {view === "settings" ? <button type="button" className="btn btn-ghost back-button" disabled={busy} onClick={back}>
+        <ArrowLeft size={18} aria-hidden="true"/>{t.back}
+      </button> : <div className="brand"><img src="/ema-logo.svg" alt=""/>EMA</div>}
+      {view === "history" && mailboxReady && <label className="header-search"><Search size={14} aria-hidden="true"/>
+        <input className="input input-ghost" type="search" aria-label={t.search} placeholder={t.search} value={search} onChange={e => setSearch(e.target.value)}/>
+        <button type="button" className="btn btn-ghost btn-square refresh-button" aria-label={t.refresh} title={t.refresh} onClick={() => setVersion(v => v + 1)}><RefreshCw size={14} aria-hidden="true"/></button>
+      </label>}
+      {view === "settings" ? <select className="language" aria-label={t.language} value={language} disabled={busy}
+        onChange={e => patch({ language: e.target.value })}><option value="zh-CN">中文</option><option value="en">English</option></select>
+        : <button type="button" className="btn btn-ghost btn-square settings-button" aria-label={t.settings} title={t.settings} onClick={openSettings}>
+          <SettingsIcon size={19} aria-hidden="true"/>
+        </button>}
+    </header>
+    {view === "history" ? mailboxReady ? <div className="app-content"><MailHistory language={language} search={search} version={version}/></div>
+      : <div className="login-gate"><button type="button" className="btn login-button" onClick={openSettings}>{t.loginMail}</button>
       </div>
-      <label className="field"><span>{t.address}</span>
-        <input type="email" autoComplete="email" placeholder="name@qq.com"
-          value={settings.mail.address} onChange={e => changeAddress(e.target.value)} /></label>
-      {selected === "custom" && <>
-        <label className="field"><span>{t.login}</span>
-          <input value={settings.mail.username} onChange={e => patchMail({ username: e.target.value })} /></label>
-        <div className="servers">
-          <label className="field"><span>{t.imap}</span>
-            <input value={settings.mail.imap_host} onChange={e => patchMail({ imap_host: e.target.value })} /></label>
-          <label className="field port"><span>{t.port}</span>
-            <input type="number" value={settings.mail.imap_port}
-              onChange={e => patchMail({ imap_port: Number(e.target.value) })} /></label>
-          <label className="field"><span>{t.smtp}</span>
-            <input value={settings.mail.smtp_host} onChange={e => patchMail({ smtp_host: e.target.value })} /></label>
-          <label className="field port"><span>{t.port}</span>
-            <input type="number" value={settings.mail.smtp_port}
-              onChange={e => patchMail({ smtp_port: Number(e.target.value) })} /></label>
-        </div>
-      </>}
-      <label className="field"><span>{selected === "qq" ? t.auth : t.password}</span>
-        <div className="secret-input">
-          <input type={showSecret ? "text" : "password"} autoComplete="new-password" value={secret}
-            placeholder={selected === "qq" ? t.authPlaceholder : t.keepSecret}
-            onChange={e => { setSecret(e.target.value); setConnectionOk(false); }} />
-          <button type="button" className="secret-toggle" tabIndex={-1}
-            onClick={() => setShowSecret(!showSecret)}>
-            {showSecret ? <EyeOff size={15} /> : <Eye size={15} />}
-          </button>
-        </div></label>
-      <p className="field-hint">{t.secretStorage}</p>
-      <div className="inline-actions">
-        {selected === "qq" && <a href="https://help.mail.qq.com/detail/106/985" target="_blank" rel="noreferrer">{t.getCode}</a>}
-        <button type="button" className="link-button" disabled={testing}
-          onClick={() => { void validateConnection(); }}>
-          {testing ? t.checking : t.checkConnection}
-        </button>
-      </div>
-      {connectionOk && <p className="success-text"><CheckCircle size={14} /> {t.connected}</p>}
-    </div>;
-  }
-
-  function whitelistFields() {
-    return <div className="form-body">
-      <label className="field"><span>{t.senders}</span>
-        <textarea rows={4} value={allowlistText}
-          placeholder="you@example.com"
-          onChange={e => { setAllowlistText(e.target.value); patch({ allowlist: normalizeAllowlist(e.target.value) }); setTestSent(false); }} />
-      </label>
-      <p className="field-hint"><Shield size={14} /> {t.senderHelp}</p>
-    </div>;
-  }
-
-  function guide() {
-    const titles = [t.emailStep, t.allowStep, t.testStep];
-    const descriptions = [t.emailDesc, t.allowDesc, t.testDesc];
-    return <section className="guide">
-      <div className="guide-progress" aria-label={t.setup}>
-        {titles.map((title, index) => <div className={"guide-progress-item " + (index + 1 <= step ? "current" : "")} key={title}>
-          <span className="progress-number">{index + 1 < step ? <Check size={13} /> : index + 1}</span>
-          <span>{title}</span>
-        </div>)}
-      </div>
-      <div className="guide-heading"><span className="eyebrow">{t.step} {step} / 3</span>
-        <h1>{titles[step - 1]}</h1><p>{descriptions[step - 1]}</p></div>
-      {step === 1 && mailboxFields()}
-      {step === 2 && whitelistFields()}
-      {step === 3 && <div className="form-body">
-        <div className="test-illustration"><Send size={26} /><span>{t.testStep}</span></div>
-        {settings.allowlist.length ? <label className="field"><span>{t.chooseReceiver}</span>
-          <select value={testRecipient} onChange={e => { setTestRecipient(e.target.value); setTestSent(false); }}>
-            <option value="">{t.chooseReceiver}</option>
-            {settings.allowlist.map(email => <option value={email} key={email}>{email}</option>)}
-          </select>
-        </label> : <p className="field-hint">{t.missingAllow}</p>}
-        <button type="button" className="outline-button" disabled={sending || !testRecipient || !settings.mail.address}
-          onClick={() => { void sendTest(); }}>{sending ? t.sending : t.sendTest}</button>
-        {testSent && <p className="success-text"><CheckCircle size={14} />{t.sent}</p>}
-        <p className="field-hint">{t.testNoDelivery}</p>
-      </div>}
-      {notice && <div className="notice" role="status">{notice}</div>}
-      <div className="guide-actions">
-        {step > 1 && <button className="text-button" type="button" onClick={() => {setNotice("");setStep((step - 1) as Step);}}>
-          <ArrowLeft size={15} />{t.back}</button>}
-        <button className="text-button" type="button" disabled={saving || sending || testing} onClick={skipStep}>{t.skipStep}</button>
-        {step === 1 && <button className="primary-button" disabled={saving || testing} onClick={() => { void nextEmail(); }}>{t.next}<ArrowRight size={15}/></button>}
-        {step === 2 && <button className="primary-button" disabled={saving} onClick={() => { void nextAllowlist(); }}>{t.allowSave}<ArrowRight size={15}/></button>}
-        {step === 3 && <button className="primary-button" disabled={saving} onClick={() => {void finishGuide(testSent);}}>
-          {testSent && connectionOk ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
-      </div>
-    </section>;
-  }
-
-  function settingsPanel() {
-    const tabs: { id: SettingsTab; label: string; icon: typeof Mail }[] = [
-      { id: "mail", label: t.mailboxConfig, icon: Mail },
-      { id: "allowlist", label: t.senders, icon: Shield },
-      { id: "agents", label: t.agent, icon: Activity }
-    ];
-    const activeTab = tabs.find(tab => tab.id === settingsTab)!;
-    return <div className="settings-page">
-      <div className="page-title">
-        <div><span className="eyebrow">{t.settings}</span><h1>{activeTab.label}</h1></div>
-        <button className="text-button" type="button" onClick={openGuide}><HelpCircle size={15}/>{t.reopenGuide}</button>
-      </div>
-      <div className="settings-layout">
+      : <div className="settings-page">
+        <h1>{t.settings}</h1>
         <nav className="settings-nav" aria-label={t.settings}>
-          {tabs.map(tab => <button key={tab.id} type="button"
-            className={"settings-nav-item " + (settingsTab === tab.id ? "active" : "")}
-            aria-current={settingsTab === tab.id ? "page" : undefined}
-            onClick={() => { setSettingsTab(tab.id); setNotice(""); }}>
-            <tab.icon size={16}/><span>{tab.label}</span>
-          </button>)}
+          {([['mail', t.mailbox], ['allowlist', t.senders], ['agents', t.agents]] as const).map(([id, label]) =>
+            <button type="button" key={id} className={`btn btn-ghost settings-nav-item ${settingsTab === id ? 'active' : ''}`}
+              aria-current={settingsTab === id ? "page" : undefined} disabled={busy} onClick={() => { setSettingsTab(id); setNotice(""); }}>{label}</button>)}
         </nav>
-        <div className="settings-main">
-          {settingsTab === "mail" && <section className="section">
-            <h2>{t.mailboxConfig}</h2>
-            {needsMailSecret && <div className="alert notice" role="alert">{t.missingSecret}</div>}
-            {mailboxFields()}
+        <fieldset className="settings-fields" disabled={busy}>
+          {settingsTab === "mail" && <>
+            <div className="choice">
+              <button type="button" className={`btn btn-ghost ${selected === 'qq' ? 'selected' : ''}`} aria-pressed={selected === 'qq'}
+                onClick={() => patchMail(qqMail(settings.mail.address))}>{t.qq}</button>
+              <button type="button" className={`btn btn-ghost ${selected === 'custom' ? 'selected' : ''}`} aria-pressed={selected === 'custom'}
+                onClick={() => patchMail({ provider: "custom" })}>{t.other}</button>
+            </div>
+            <label className="field"><span>{t.address}</span><input className="input input-ghost" type="email" autoComplete="email" placeholder="name@example.com"
+              value={settings.mail.address} onChange={e => patchMail(selected === 'qq' ? { address: e.target.value, username: e.target.value } : { address: e.target.value })}/></label>
+            {selected === 'custom' && <>
+              <label className="field"><span>{t.username}</span><input className="input input-ghost" value={settings.mail.username} onChange={e => patchMail({ username: e.target.value })}/></label>
+              <div className="servers">
+                <label className="field"><span>{t.imap}</span><input className="input input-ghost" value={settings.mail.imap_host} onChange={e => patchMail({ imap_host: e.target.value })}/></label>
+                <label className="field"><span>{t.port}</span><input className="input input-ghost" type="number" min="1" max="65535" value={settings.mail.imap_port} onChange={e => patchMail({ imap_port: Number(e.target.value) })}/></label>
+                <label className="field"><span>{t.smtp}</span><input className="input input-ghost" value={settings.mail.smtp_host} onChange={e => patchMail({ smtp_host: e.target.value })}/></label>
+                <label className="field"><span>{t.port}</span><input className="input input-ghost" type="number" min="1" max="65535" value={settings.mail.smtp_port} onChange={e => patchMail({ smtp_port: Number(e.target.value) })}/></label>
+              </div>
+            </>}
+            <label className="field"><span>{selected === 'qq' ? t.auth : t.password}</span>
+              <div className="secret-input"><input className="input input-ghost" type={showSecret ? 'text' : 'password'} autoComplete="new-password" value={secret}
+                placeholder={mailboxReady ? t.keepSecret : t.secretPlaceholder} onChange={e => { setSecret(e.target.value); setConnectionOk(false); }}/>
+                <button type="button" className="btn btn-ghost btn-square secret-toggle" aria-label={showSecret ? t.hideSecret : t.showSecret}
+                  onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={16}/> : <Eye size={16}/>}</button>
+              </div>
+            </label>
+            <div className="inline-actions">
+              {selected === 'qq' && <a href="https://help.mail.qq.com/detail/106/985" target="_blank" rel="noreferrer">{t.getCode}</a>}
+              <button type="button" className="btn btn-ghost" onClick={() => { void validateConnection(); }}>{testing ? t.checking : t.testConnection}</button>
+            </div>
+            {connectionOk && <p className="success-text"><CheckCircle size={15}/>{t.connected}</p>}
+            <p className="field-hint">{t.secretStorage}</p>
             <p className="field-hint">{t.hookNotice}</p>
-          </section>}
-          {settingsTab === "allowlist" && <section className="section">
-            <h2>{t.senders}</h2>{whitelistFields()}
-          </section>}
-          {settingsTab === "agents" && <section className="section">
-            <h2>{t.agent}</h2>
-            <button type="button" className="routes-toggle" aria-expanded={routesOpen}
-              onClick={() => setRoutesOpen(!routesOpen)}>
-              <span>{t.routes}</span>
-              <span className="routes-toggle-meta">{settings.agent_routes.length}
-                <ChevronDown size={15} className={routesOpen ? "rotate" : ""}/></span>
-            </button>
-            {routesOpen && <div className="routes">
-              {settings.agent_routes.map((route, index) => <label className="route-row" key={route.agent}>
-                <span className="route-name">{route.agent}</span>
-                <input aria-label={route.agent + " prefix"} value={route.prefix}
-                  onChange={e => patch({agent_routes: settings.agent_routes.map((a,i) =>
-                    i === index ? {...a, prefix:e.target.value, enabled:true} : a)})}/>
+            {!mailboxReady && savedSettings.mail.address && <p className="field-hint">{t.missingSecret}</p>}
+            {mailboxReady && <details className="advanced"><summary>{t.testMail}</summary>
+              <label className="field"><span>{t.recipient}</span><select value={testRecipient} onChange={e => setTestRecipient(e.target.value)}>
+                <option value="">—</option>{savedSettings.allowlist.map(address => <option key={address}>{address}</option>)}
+              </select></label>
+              <button type="button" className="btn btn-ghost" disabled={dirty || !testRecipient} onClick={() => { void sendTest(); }}>{sending ? t.sending : t.testMail}</button>
+              <p className="field-hint">{dirty ? t.saveFirst : t.testHint}</p>
+            </details>}
+          </>}
+          {settingsTab === "allowlist" && <>
+            <label className="field"><span>{t.senders}</span><textarea rows={5} value={allowlistText} placeholder="you@example.com"
+              onChange={e => { setAllowlistText(e.target.value); patch({ allowlist: normalizeAllowlist(e.target.value) }); }}/></label>
+            <p className="field-hint">{t.senderHelp}</p>
+          </>}
+          {settingsTab === "agents" && <>
+            <label className="switch-line"><span>{t.enabled}</span><input type="checkbox" role="switch" checked={settings.enabled}
+              disabled={!savedSettings.allowlist.length || !mailboxReady} onChange={e => patch({ enabled: e.target.checked })}/></label>
+            <p className="field-hint">{t.enabledHint}</p>
+            <details className="advanced"><summary>{t.prefixes}</summary><div className="routes">
+              {settings.agent_routes.map((route, index) => <label className="route-row" key={route.agent}><span>{route.agent}</span>
+                <input className="input input-ghost" aria-label={`${route.agent} prefix`} value={route.prefix} onChange={e => patch({ agent_routes: settings.agent_routes.map((a, i) => i === index ? { ...a, prefix: e.target.value, enabled: true } : a) })}/>
               </label>)}
-            </div>}
-            <p className="field-hint">{t.notSupported}</p>
-          </section>}
-
-          <div className="settings-footer">
-            {notice && <div className="notice" role="status">{notice}</div>}
-            <button className="primary-button" type="button" disabled={saving}
-              onClick={() => { void persist(settings, true); }}>
-              {saving ? t.saving : t.save}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>;
-  }
-
-  if (loading) return <main className="app"><div className="loading">EMA</div></main>;
-  return <main className={"app app-" + view}>
-    <aside className="app-sidebar">
-      <div className="brand"><img className="brand-icon" src="/ema-logo.svg" alt=""/>
-        <div className="brand-title"><strong>EMA</strong><span>Email Agent</span></div>
-      </div>
-      <nav className="main-nav" aria-label={t.settings}>
-        <button className={"main-nav-item " + (view === "history" ? "active" : "")}
-          type="button" onClick={() => { setNotice(""); setView("history"); }}>
-          <Archive size={17}/><span>{t.history}</span>
-        </button>
-        <button className={"main-nav-item " + (view === "settings" ? "active" : "")}
-          type="button" onClick={() => { setNotice(""); setView("settings"); }}>
-          <Sliders size={17}/>{t.settings}
-        </button>
-      </nav>
-      <div className="sidebar-bottom">
-        <span className={"status-indicator " + (settings.enabled ? "enabled" : "")}/>
-        <span>{settings.enabled ? t.running : t.paused}</span>
-      </div>
-    </aside>
-    <div className="app-main">
-      <header className="header">
-        <div className="mobile-brand"><img src="/ema-logo.svg" alt=""/>EMA</div>
-        {view !== "welcome" && <nav className="mobile-nav" aria-label={t.settings}>
-          <button type="button" className={view === "history" ? "active" : ""}
-            aria-label={t.history} title={t.history} aria-current={view === "history" ? "page" : undefined}
-            onClick={() => { setNotice(""); setView("history"); }}><Archive size={17}/></button>
-          <button type="button" className={view === "settings" ? "active" : ""}
-            aria-label={t.settings} title={t.settings} aria-current={view === "settings" ? "page" : undefined}
-            onClick={() => { setNotice(""); setView("settings"); }}><Sliders size={17}/></button>
-        </nav>}
-        <div className="header-context">{view === "settings" ? t.settings : view === "history" ? t.history : t.setup}</div>
-        <div className="header-right">
-          {view === "welcome" && <button type="button" className="header-link"
-            disabled={saving || sending || testing} onClick={() => { void finishGuide(false); }}>
-            {t.skipAll}
-          </button>}
-          {view === "welcome" && <select aria-label={t.language} className="language"
-            value={language} onChange={e => patch({language:e.target.value})}>
-            <option value="zh-CN">中文</option><option value="en">English</option>
-          </select>}
-          <span className={"header-state " + (settings.enabled ? "running" : "")}>
-            <span className="state-dot"/>{settings.enabled ? t.running : t.paused}
-          </span>
-        </div>
-      </header>
-      <div className="app-content">
-        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : <MailHistory language={language}/>}
-      </div>
-    </div>
+            </div><p className="field-hint">{t.prefixHelp}</p></details>
+          </>}
+        </fieldset>
+        <footer className="settings-footer">
+          {(notice || loadError) && <p className="notice" role="status">{notice || loadError}</p>}
+          <button type="button" className="btn primary-button" disabled={busy} onClick={() => { void save(); }}>
+            {saving ? t.saving : testing ? t.checking : !mailboxReady ? t.loginMail : t.save}
+          </button>
+        </footer>
+      </div>}
   </main>;
 }

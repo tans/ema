@@ -4,8 +4,12 @@ EMA uses [Feather Icons](https://feathericons.com/) through the official
 [react-feather](https://github.com/feathericons/react-feather) package.
 The Logo, favicon and generated desktop application icons use Feather's
 [`mail` SVG](https://github.com/feathericons/feather/blob/v4.29.0/icons/mail.svg),
-with its size and stroke color adapted for EMA. Regenerate desktop assets with
-`npm run icons` after editing `public/ema-logo.svg`.
+with its size and stroke color adapted for EMA. Desktop icons add a white
+background with an outer transparent margin (416 px tile on a 512 px canvas),
+and center the symbol in half the white tile. Regenerate desktop assets
+with `npm run icons` after editing `public/ema-app-icon.svg`; the interface Logo
+and favicon use `public/ema-logo.svg`. The tray icon also uses the transparent
+Logo so macOS template rendering does not turn the white tile into a solid block.
 
 Feather Icons license:
 
