@@ -109,7 +109,7 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
                         format!("Agent process still running; no new activity for {} minutes.", quiet / 60)
                     } else { format!("Last observed Agent activity {} seconds ago.", quiet) };
                     let text = format!("Task still running ({} minutes).\n{}\n\nThis is an automated status update, not a completion report.", minutes, observed);
-                    db.queue_reply(&session.id, &config.mail.address, &text)?;
+                    db.queue_reply(&session.id, &config.mail.address, &text, "progress")?;
                 }
             }
         }

@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use lettre::{message::Mailbox, transport::smtp::authentication::Credentials, Message, SmtpTransport, Transport};
+use lettre::{message::{header::GenericHeader, Mailbox}, transport::smtp::authentication::Credentials, Message, SmtpTransport, Transport};
 use mailparse::{MailAddr, MailHeaderMap, ParsedMail};
 use crate::{config::MailSettings, db::Outbound};
 
@@ -12,6 +12,10 @@ pub struct Incoming {
     pub body: String,
     pub references: Vec<String>,
     pub automated: bool,
+    /// X-EMA-Kind header value, if present. Only EMA-written mail carries it.
+    pub ema_kind: Option<String>,
+    /// X-EMA-Message-Id header value (the original generated id), if present.
+    pub ema_message_id: Option<String>,
 }
 #[derive(Debug)]
 pub struct FetchedMail {
@@ -114,9 +118,11 @@ fn parse(uid: u32, raw: &[u8]) -> Result<Incoming> {
         || headers.get_first_value("Precedence")
             .map(|v|["bulk","list","junk"].contains(&v.to_ascii_lowercase().as_str()))
             .unwrap_or(false);
-    Ok(Incoming{uid,message_id:mid,sender,subject:headers.get_first_value("Subject")
-        .unwrap_or_else(||"Task".into()),body:plaintext(&parsed)?.chars().take(20_000).collect(),
-        references:refs,automated:auto})
+    let ema_kind=headers.get_first_value("X-EMA-Kind").map(|v|v.trim().to_string()).filter(|v|!v.is_empty());
+        let ema_message_id=headers.get_first_value("X-EMA-Message-Id").map(|v|v.trim().to_string()).filter(|v|!v.is_empty());
+        Ok(Incoming{uid,message_id:mid,sender,subject:headers.get_first_value("Subject")
+            .unwrap_or_else(||"Task".into()),body:plaintext(&parsed)?.chars().take(20_000).collect(),
+            references:refs,automated:auto,ema_kind,ema_message_id})
 }
 fn login(c:&MailSettings,pass:&str)->Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>> {
     let tls=native_tls::TlsConnector::builder().build()?;
@@ -174,6 +180,14 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
         .message_id(Some(o.message_id.clone()));
     if !o.in_reply_to.is_empty() { builder=builder.in_reply_to(o.in_reply_to.clone()); }
     if !o.references.is_empty() { builder=builder.references(o.references.clone()); }
+    // Self-identification headers: survive QQ Mail's Message-ID rewrite so our own
+    // outbound mail coming back into the INBOX can be recognized and dropped as echo.
+    if !o.kind.is_empty() {
+        builder = builder.header(GenericHeader::new("X-EMA-Kind".to_string(), o.kind.clone()));
+    }
+    if !o.message_id.is_empty() {
+        builder = builder.header(GenericHeader::new("X-EMA-Message-Id".to_string(), o.message_id.clone()));
+    }
     let msg=builder.body(o.body.clone())?;
     let builder = if c.smtp_port == 587 {
         SmtpTransport::starttls_relay(&c.smtp_host)?

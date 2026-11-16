@@ -32,6 +32,7 @@ pub struct Outbound {
     pub references: String,
     pub body: String,
     pub attempts: i64,
+    pub kind: String,
 }
 #[derive(Debug)]
 pub struct HookReport {
@@ -61,6 +62,7 @@ pub struct MailRecord {
     pub created_at: Option<i64>,
     pub sent_at: Option<i64>,
     pub attempts: Option<i64>,
+    pub kind: String,
 }
 #[derive(Debug, Serialize)]
 pub struct Stats {
@@ -141,6 +143,9 @@ impl Database {
             CREATE TABLE IF NOT EXISTS hook_events (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS routing_replies (incoming_mid TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_context (message_id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_session TEXT NOT NULL, cwd TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS message_aliases (
+              alias_mid TEXT PRIMARY KEY, ema_mid TEXT NOT NULL, session_id TEXT,
+              created_at INTEGER NOT NULL);
         ")?;
         let mut outbox_stmt=c.prepare("PRAGMA table_info(outbox)")?;
         let outbox_cols=outbox_stmt.query_map([], |r|r.get::<_,String>(1))?
@@ -154,10 +159,22 @@ impl Database {
             ("created_at", "INTEGER"),
             ("sent_at", "INTEGER"),
             ("last_error", "TEXT NOT NULL DEFAULT ''"),
+            ("kind", "TEXT NOT NULL DEFAULT ''"),
         ] {
             if !outbox_cols.iter().any(|column| column == name) {
                 c.execute(&format!("ALTER TABLE outbox ADD COLUMN {name} {definition}"), [])?;
             }
+        }
+        // Classify legacy outbox rows by source so history badges keep working after the kind migration.
+        c.execute("UPDATE outbox SET kind='hook' WHERE kind='' AND source='hook'", [])?;
+        c.execute("UPDATE outbox SET kind='test' WHERE kind='' AND source='test'", [])?;
+        c.execute("UPDATE outbox SET kind='result' WHERE kind='' AND source='task'", [])?;
+        let mut inbox_stmt=c.prepare("PRAGMA table_info(mail_inbox)")?;
+        let inbox_cols=inbox_stmt.query_map([], |r|r.get::<_,String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(inbox_stmt);
+        if !inbox_cols.iter().any(|name|name=="kind") {
+            c.execute("ALTER TABLE mail_inbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'unrelated'",[])?;
         }
         // Older threaded replies have a creation time in messages; other old rows do not.
         c.execute("UPDATE outbox SET created_at=(SELECT created_at FROM messages WHERE messages.message_id=outbox.message_id) WHERE created_at IS NULL", [])?;
@@ -185,13 +202,41 @@ impl Database {
     pub fn find_by_references(&self, refs: &[String]) -> Result<Option<Session>> {
         let c = self.lock()?;
         for mid in refs {
+            let resolved = self.resolve_message_id(&c, mid)?;
             let result = c.query_row(
                 "SELECT s.id,s.owner,s.agent,s.project,s.agent_session,s.subject,s.root_mid,s.last_mid,s.cwd
                 FROM messages m JOIN sessions s ON m.session_id=s.id WHERE m.message_id=?1",
-                [mid], Self::map_session).optional()?;
+                [resolved], Self::map_session).optional()?;
             if result.is_some() { return Ok(result); }
         }
         Ok(None)
+    }
+    /// QQ Mail rewrites Message-IDs of outbound mail (`<tencent_...@qq.com>`), so a real
+    /// reply references the rewritten ID, not the `<ema-...>` ID we stored. Resolve through
+    /// the alias table recorded when our own outbound mail came back as an echo.
+    fn resolve_message_id(&self, c: &rusqlite::Connection, mid: &str) -> Result<String> {
+        let ema: Option<String> = c.query_row(
+            "SELECT ema_mid FROM message_aliases WHERE alias_mid=?1", [mid],
+            |r| r.get(0)).optional()?;
+        Ok(ema.unwrap_or_else(|| mid.to_string()))
+    }
+    /// Record that `<alias_mid>` (e.g. a tencent-rewritten Message-ID) actually refers to
+    /// `<ema_mid>` (the original id we generated). session_id fills in where known.
+    pub fn record_alias(&self, alias_mid: &str, ema_mid: &str) -> Result<()> {
+        if alias_mid == ema_mid || alias_mid.trim().is_empty() { return Ok(()); }
+        let session_id: Option<String> = self.lock()?.query_row(
+            "SELECT session_id FROM messages WHERE message_id=?1", [ema_mid],
+            |r| r.get(0)).optional()?;
+        self.lock()?.execute(
+            "INSERT OR IGNORE INTO message_aliases(alias_mid,ema_mid,session_id,created_at)
+             VALUES(?1,?2,?3,strftime('%s','now'))",
+            params![alias_mid, ema_mid, session_id])?;
+        Ok(())
+    }
+    pub fn set_inbound_kind(&self, message_id: &str, kind: &str) -> Result<()> {
+        self.lock()?.execute("UPDATE mail_inbox SET kind=?2 WHERE message_id=?1",
+            params![message_id, kind])?;
+        Ok(())
     }
     pub fn is_outbound(&self, mid: &str) -> Result<bool> {
         Ok(self.lock()?.query_row("SELECT EXISTS(SELECT 1 FROM outbox WHERE message_id=?1)",
@@ -200,11 +245,12 @@ impl Database {
     pub fn find_hook_report(&self, refs: &[String]) -> Result<Option<HookReport>> {
         let c = self.lock()?;
         for mid in refs {
+            let resolved = self.resolve_message_id(&c, mid)?;
             let row: Option<(String,String,Option<String>,Option<String>,Option<String>)> = c.query_row(
                 "SELECT o.subject,o.body,h.agent,h.native_session,h.cwd FROM outbox o
                  LEFT JOIN hook_context h ON h.message_id=o.message_id
                  WHERE o.message_id=?1 AND o.source='hook'",
-                [mid], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+                [resolved], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
             if let Some((subject,body,agent,native_session,cwd))=row {
                 let field=|key:&str| body.lines().find_map(|line|line.strip_prefix(key))
                     .unwrap_or("").trim().to_string();
@@ -241,6 +287,10 @@ impl Database {
         let added = tx.execute("INSERT OR IGNORE INTO messages(message_id,session_id,direction,created_at)
             VALUES (?1,?2,'in',strftime('%s','now'))", params![mid,session_id])?;
         if added == 0 { tx.rollback()?; return Ok(None); }
+        // Mail classification: a message that reaches this point is a task — either the
+        // start of a new session or a continuation of an existing one.
+        tx.execute("UPDATE mail_inbox SET kind=?2 WHERE message_id=?1",
+            params![mid, if existing.is_some() {"resume_task"} else {"new_task"}])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
         let job_id=Uuid::new_v4().to_string();
         let outbox_id=Uuid::new_v4().to_string();
@@ -252,7 +302,9 @@ impl Database {
         let task=task.chars().take(2000).collect::<String>();
         let context=hook.map(|report|format!("\n\n上次报告：\n{}",report.body.chars().take(2600).collect::<String>())).unwrap_or_default();
         let limit=if agent=="alma" {"\n权限：沿用 EMA 只读设置，本次不调用工具。"} else {""};
-        let body=format!("已收到邮件。\n状态：{status}\nAgent：{agent}\nAgent 会话：{native}\nEMA 会话：{session_id}\n任务 ID：{job_id}{limit}\n\n本次任务：\n{task}{context}");
+        let cwd_line=cwd.filter(|p|!p.trim().is_empty())
+            .map(|p|format!("运行目录：{}\n",p.trim())).unwrap_or_default();
+        let body=format!("{cwd_line}已收到邮件。\n状态：{status}\nAgent：{agent}\nAgent 会话：{native}\nEMA 会话：{session_id}\n任务 ID：{job_id}{limit}\n\n本次任务：\n{task}{context}");
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let out_mid=format!("<ema-{}@{}>",Uuid::new_v4(),domain);
         let root=existing.map(|s|s.root_mid.as_str())
@@ -260,9 +312,10 @@ impl Database {
         let refs=if root==mid {root.to_string()} else {format!("{root} {mid}")};
         let reply_subject=existing.map(|s|s.subject.as_str())
             .or_else(||hook.map(|report|report.subject.as_str())).unwrap_or(subject);
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))",
-            params![outbox_id,out_mid,owner,format!("Re: {reply_subject}"),mid,refs,body,mailbox])?;
+        let ack_kind=if existing.is_some() {"resume_ack"} else {"new_task_ack"};
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
+            params![outbox_id,out_mid,owner,format!("Re: {reply_subject}"),mid,refs,body,mailbox,ack_kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![out_mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![out_mid,session_id])?;
@@ -312,15 +365,15 @@ impl Database {
     }
     pub fn mail_history(&self, search: &str, offset: i64) -> Result<Vec<MailRecord>> {
         let c = self.lock()?;
-        let mut stmt = c.prepare("SELECT id,message_id,direction,sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,sent_at,attempts FROM (
+        let mut stmt = c.prepare("SELECT id,message_id,direction,sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,sent_at,attempts,kind FROM (
             SELECT 'in:'||mailbox||':'||uid_validity||':'||uid AS id,message_id,'in' AS direction,
-              sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,NULL AS sent_at,0 AS attempts
+              sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,NULL AS sent_at,0 AS attempts,kind
               FROM mail_inbox
             UNION ALL
             SELECT 'out:'||id,message_id,'out',sender,'',recipient,'',refs,'',subject,body,state,last_error,'',created_at,sent_at,
-              CASE WHEN state='sent' AND sent_at IS NULL THEN NULL ELSE attempts END FROM outbox
+              CASE WHEN state='sent' AND sent_at IS NULL THEN NULL ELSE attempts END,kind FROM outbox
             UNION ALL
-            SELECT 'legacy:'||m.message_id,m.message_id,'in',s.owner,'','','','','','','','legacy','','legacy',m.created_at,NULL,0
+            SELECT 'legacy:'||m.message_id,m.message_id,'in',s.owner,'','','','','','','','legacy','','legacy',m.created_at,NULL,0,'legacy'
               FROM messages m JOIN sessions s ON m.session_id=s.id
               WHERE m.direction='in' AND NOT EXISTS (SELECT 1 FROM mail_inbox i WHERE i.message_id=m.message_id)
             ) WHERE ?1='' OR instr(lower(message_id||' '||sender||' '||mailbox||' '||recipient||' '||cc||' '||refs||' '||subject||' '||body),lower(?1))>0
@@ -329,7 +382,7 @@ impl Database {
             id:r.get(0)?,message_id:r.get(1)?,direction:r.get(2)?,sender:r.get(3)?,mailbox:r.get(4)?,
             recipient:r.get(5)?,cc:r.get(6)?,references:r.get(7)?,original_date:r.get(8)?,
             subject:r.get(9)?,body:r.get(10)?,status:r.get(11)?,detail:r.get(12)?,archive_note:r.get(13)?,
-            created_at:r.get(14)?,sent_at:r.get(15)?,attempts:r.get(16)?,
+            created_at:r.get(14)?,sent_at:r.get(15)?,attempts:r.get(16)?,kind:r.get(17)?,
         }))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -374,14 +427,14 @@ impl Database {
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let reply_mid=format!("<ema-error-{}@{}>",Uuid::new_v4(),domain);
         let refs=references.iter().take(20).map(String::as_str).chain(std::iter::once(mid)).collect::<Vec<_>>().join(" ");
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'))",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at,kind)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'),'error')",
             params![Uuid::new_v4().to_string(),reply_mid,recipient,
                 format!("Re: {}",subject),mid,refs,error,mailbox])?;
         tx.commit()?;
         Ok(true)
     }
-    pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str) -> Result<()> {
+    pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str, kind: &str) -> Result<()> {
         let mut c = self.lock()?;
         let tx = c.transaction()?;
         let session = tx.query_row(
@@ -391,10 +444,10 @@ impl Database {
         let mid = format!("<ema-{}@{}>",Uuid::new_v4(), domain);
         let refs = if session.root_mid == session.last_mid { session.root_mid.clone() }
             else { format!("{} {}",session.root_mid,session.last_mid) };
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
             params![Uuid::new_v4().to_string(),mid,session.owner,format!("Re: {}",session.subject),
-                session.last_mid, refs,body,mailbox])?;
+                session.last_mid, refs,body,mailbox,kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![mid,session_id])?;
@@ -423,8 +476,8 @@ impl Database {
         if inserted == 0 { tx.rollback()?;return Ok(false); }
         let domain=recipient.split('@').nth(1).unwrap_or("localhost");
         let message_id=format!("<ema-hook-{}@{}>",Uuid::new_v4(),domain);
-        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at)
-            VALUES(?1,?2,?3,?4,'','',?5,'hook',?3,strftime('%s','now'))",
+        tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at,kind)
+            VALUES(?1,?2,?3,?4,'','',?5,'hook',?3,strftime('%s','now'),'hook')",
             params![Uuid::new_v4().to_string(),message_id,recipient,subject,body])?;
         tx.execute("INSERT INTO hook_context(message_id,agent,native_session,cwd) VALUES(?1,?2,?3,?4)",
             params![message_id,agent,native_session,cwd])?;
@@ -433,13 +486,13 @@ impl Database {
     }
     pub fn pending_outbox(&self, include_task:bool) -> Result<Vec<Outbound>> {
         let c=self.lock()?;
-        let mut st=c.prepare("SELECT id,message_id,recipient,subject,in_reply_to,refs,body,attempts
+        let mut st=c.prepare("SELECT id,message_id,recipient,subject,in_reply_to,refs,body,attempts,kind
             FROM outbox WHERE state='queued' AND next_attempt <= strftime('%s','now')
                 AND (?1=1 OR source='hook')
             ORDER BY rowid LIMIT 20")?;
         let rows=st.query_map([include_task],|r| Ok(Outbound {id:r.get(0)?,message_id:r.get(1)?,
             recipient:r.get(2)?,subject:r.get(3)?,in_reply_to:r.get(4)?,
-            references:r.get(5)?,body:r.get(6)?,attempts:r.get(7)?}))?;
+            references:r.get(5)?,body:r.get(6)?,attempts:r.get(7)?,kind:r.get(8)?}))?;
         let outgoing=rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(outgoing)
     }
@@ -450,6 +503,7 @@ impl Database {
             recipient:recipient.to_string(), subject:"EMA email connection test".into(),
             in_reply_to:String::new(), references:String::new(),
             body:"This is a connection test from EMA. No agent task was created.\n".into(), attempts:0,
+            kind:"test".to_string(),
         };
         self.lock()?.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,state,created_at)
             VALUES(?1,?2,?3,?4,'','',?5,'test',?6,'sending',strftime('%s','now'))",

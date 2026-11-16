@@ -25,6 +25,10 @@ fn has_mail_secret() -> bool {
     secret("mail").is_ok()
 }
 #[tauri::command]
+fn get_secret(name: String) -> Result<String, String> {
+    secret(&name).map_err(|e| e.to_string())
+}
+#[tauri::command]
 fn get_stats(state: tauri::State<'_, Arc<Gateway>>) -> Result<ema_core::db::Stats,String> {
     state.stats().map_err(|e| e.to_string())
 }
@@ -142,7 +146,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_settings,save_settings,set_secret,has_mail_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail,
+            get_settings,save_settings,set_secret,has_mail_secret,get_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail,
             get_mail_history
         ])
         .on_window_event(|window,event| {

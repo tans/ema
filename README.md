@@ -125,7 +125,7 @@ resumed as a different Agent. Actual CLI compatibility varies by installed versi
 
 The EMA status overview now separates **Email → Agent** tasks from **Local Agent → Email** completion reports. Eleven text prefixes are recognized, and unsupported email execution commands receive an informative reply instead of being silently ignored.
 
-Native local Hook reporting currently covers Codex, Claude Code, Gemini, OpenCode, Pi, OMP, Kimi, ZCode, Hermes and OpenClaw. DSH reporting is supported when the DSH profile has already installed the third-party `dsh-hooks` plugin. No additional Hook settings screen is required. Hook installation preserves explicit user disables and existing third-party rules.
+Native local Hook reporting currently covers Codex, Claude Code, Gemini, OpenCode, Pi, OMP, Kimi, ZCode, Hermes, OpenClaw and Alma (main replies). DSH reporting is supported when the DSH profile has already installed the third-party `dsh-hooks` plugin. No additional Hook settings screen is required. Hook installation preserves explicit user disables and existing third-party rules.
 
 New sessions started by email subject prefixes currently support Codex, Claude Code and Gemini CLI. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
 
@@ -151,7 +151,7 @@ Hook implementations:
 | Claude Code | `Stop` command hook | `~/.claude/settings.json` |
 | Gemini CLI | `AfterAgent` command hook | `~/.gemini/settings.json` |
 | OpenCode | `session.idle` global plugin | `~/.config/opencode/plugins/ema-report.js` |
-| Pi | `agent_end` extension | `~/.pi/agent/extensions/ema-report.ts` |
+| Pi | `agent_settled` extension (fires once, after retries/compaction settle) | `~/.pi/agent/extensions/ema-report.ts` |
 
 EMA registers hooks only for existing Agent configuration directories, and rechecks every minute, so an Agent installed later can be detected without adding a UI toggle. Existing hooks are retained; unparsable settings and unsupported or conflicting Codex `notify` commands are **not overwritten**. Before first modification, EMA writes a `*.ema-before-hook.bak` copy of any existing settings file. EMA only rewrites plugin files carrying its `EMA-MANAGED-HOOK` marker. Agent processes already running may need a restart/reload before they read new hooks.
 

@@ -26,13 +26,6 @@ fn content(v: &Value) -> String {
         else { None }
     }).collect::<Vec<_>>().join("\n")
 }
-fn question(v: &Value) -> String {
-    let input = content(&v["input-messages"]);
-    if !input.trim().is_empty() { return input; }
-    let direct = field(v, &["prompt", "user_prompt", "user_message", "question"]);
-    if !direct.is_empty() { return direct.to_owned(); }
-    content(&v["prompt"])
-}
 fn home() -> Option<PathBuf> { std::env::var_os("HOME").map(PathBuf::from) }
 fn codex_root() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".codex")))
@@ -165,33 +158,28 @@ fn alma_context(session: &str, event: &str) -> Option<(String, String, Vec<(Stri
     Some((title, question, context))
 }
 
-pub(super) fn format(agent: &str, v: &Value, language: &str) -> Option<(String, String, String)> {
-    let typ = field(v, &["type", "hook_event_name"]);
-    if !matches!((agent, typ),
-        ("codex", "agent-turn-complete") | ("claude", "Stop") | ("gemini", "AfterAgent") |
-        ("opencode", "session.idle") | ("pi", "agent_end") | ("omp", "agent_end") |
-        ("kimi", "Stop") | ("kimi", "StopFailure") | ("zcode", "Stop") |
-        ("alma", "chat.message.didReceive") | ("hermes", "on_session_end") |
-        ("openclaw", "agent_end") | ("dsh", "turn/end")) { return None; }
-    let session = field(v, &["thread-id", "session_id", "sessionID"]).to_owned();
-    let cwd = field(v, &["cwd"]);
+pub(super) fn format(agent: &str, ev: &agent_hooks::event::NormalizedEvent, language: &str) -> Option<(String, String, String)> {
+    use agent_hooks::event::EventStatus;
+    let v = &ev.raw;
+    let session = ev.session_id.clone();
+    let cwd = ev.cwd.as_str();
     let project = Path::new(cwd).file_name().and_then(|name| name.to_str()).unwrap_or("");
-    let mut task = question(v);
+    let mut task = ev.prompt.clone();
     let mut history = if agent == "codex" { codex_context(&session, field(v, &["turn-id"])) } else { Vec::new() };
     if agent == "claude" && task.is_empty() { task = claude_question(v, &session).unwrap_or_default(); }
-    let mut title = field(v, &["session_title", "thread_title", "title"]).to_owned();
+    let mut title = ev.title.clone();
     if agent == "codex" && title.is_empty() { title = codex_title(&session).unwrap_or_default(); }
     #[cfg(unix)]
     if agent == "alma" {
-        if let Some((name, prompt, context)) = alma_context(&session, field(v, &["event_id"])) {
+        if let Some((name, prompt, context)) = alma_context(&session, &ev.event_id) {
             if title.is_empty() { title = name; }
             if task.is_empty() { task = prompt; }
             history = context;
         }
     }
     let zh = language == "zh-CN";
-    let failed = (agent == "kimi" && typ == "StopFailure") || v["failed"].as_bool() == Some(true) || v["completed"].as_bool() == Some(false);
-    let interrupted = v["interrupted"].as_bool() == Some(true);
+    let failed = matches!(ev.status, EventStatus::Failed);
+    let interrupted = matches!(ev.status, EventStatus::Interrupted);
     let state = if zh { if interrupted { "已中断" } else if failed { "失败" } else { "已完成" } }
         else if interrupted { "Interrupted" } else if failed { "Failed" } else { "Completed" };
     let session_title = single_line(&title, 100);
@@ -199,19 +187,15 @@ pub(super) fn format(agent: &str, v: &Value, language: &str) -> Option<(String, 
     let report_label = if zh { "EMA 报告" } else { "EMA Report" };
     let subject = if title.is_empty() { format!("{report_label} | {} | {state}", agent.to_ascii_uppercase()) }
         else { format!("{report_label} | {} | {title}", agent.to_ascii_uppercase()) };
-    let mut answer = excerpt(field(v, &["last-assistant-message", "last_assistant_message", "prompt_response", "response"]), 10000, zh);
+    let mut answer = excerpt(&ev.response, 2000, zh);
     let mut task = excerpt(&task, 4000, zh);
     let truncated = if zh { "\n…（内容已截断）" } else { "\n… (truncated)" };
-    if v["response_truncated"] == true && !answer.ends_with(truncated) { answer.push_str(truncated); }
-    if v["prompt_truncated"] == true && !task.ends_with(truncated) { task.push_str(truncated); }
+    if ev.response_truncated && !answer.ends_with(truncated) { answer.push_str(truncated); }
+    if ev.prompt_truncated && !task.ends_with(truncated) { task.push_str(truncated); }
     if history.is_empty() {
-        history = v["context_messages"].as_array().into_iter().flatten().filter_map(|message| {
-            let role = message["role"].as_str()?;
-            let text = message["text"].as_str()?;
-            if matches!(role, "user" | "assistant") && !text.trim().is_empty() { Some((role.to_owned(), text.to_owned())) } else { None }
-        }).collect();
+        history = ev.context_messages.clone();
     }
-    let context = if history.is_empty() { excerpt(field(v, &["context"]), 2000, zh) } else {
+    let context = if history.is_empty() { excerpt(&field(v, &["context"]), 2000, zh) } else {
         let messages = history.iter().rev().take(2).map(|(role, text)| {
             let label = if zh { if role == "user" { "用户" } else { "Agent" } }
                 else if role == "user" { "User" } else { "Agent" };

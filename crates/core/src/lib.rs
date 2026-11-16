@@ -4,7 +4,7 @@ pub mod db;
 pub mod mail;
 pub mod hooks;
 #[cfg(unix)]
-pub mod hooks_extra;
+pub mod hooks_alma;
 pub mod cli;
 pub mod router;
 pub mod workspace;
@@ -108,6 +108,17 @@ impl Gateway {
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<&'static str> {
         if incoming.automated || self.database.is_outbound(&incoming.message_id)? {
             return Ok("automated");
+        }
+        // Echo of our own outbound mail. QQ Mail rewrites outgoing Message-IDs
+        // (`<tencent_...@qq.com>`), so is_outbound() above misses it — but the
+        // X-EMA-* self-identification headers survive. Recognize it, record the
+        // rewritten id→original id mapping (so real replies resolve), and drop it.
+        if incoming.ema_kind.is_some() || incoming.ema_message_id.is_some() {
+            if let Some(ema_mid) = incoming.ema_message_id.as_ref() {
+                self.database.record_alias(&incoming.message_id, ema_mid)?;
+            }
+            self.database.set_inbound_kind(&incoming.message_id, "echo")?;
+            return Ok("echo");
         }
         if !cfg.is_allowed(&incoming.sender) {
             tracing::warn!("mail rejected: unauthorized sender");
@@ -238,6 +249,8 @@ impl Gateway {
     async fn work_once(&self, cfg: Settings) -> Result<()> {
         let Some(job) = self.database.claim()? else { return Ok(()); };
         let session = self.database.session(&job.session_id)?;
+        let cwd_line = session.cwd.as_deref().filter(|p| !p.trim().is_empty())
+            .map(|p| format!("运行目录：{}\n", p.trim())).unwrap_or_default();
         let result = agent::execute(self.database.clone(), cfg.clone(), job.clone(), session).await;
         let (success, report) = match result {
             Ok(message) => (true, message),
@@ -245,7 +258,8 @@ impl Gateway {
         };
         self.database.finish(&job.id, success, &report)?;
         self.database.queue_reply(&job.session_id, &cfg.mail.address,
-            &format!("{}\n\n{}", if success {"Task completed"} else {"Task failed"}, report))?;
+            &format!("{cwd_line}{}\n\n{}", if success {"Task completed"} else {"Task failed"}, report),
+            "result")?;
         self.outbox_ready.notify_one();
         Ok(())
     }

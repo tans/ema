@@ -13,12 +13,13 @@ EMA has **two independent flows**:
 | cc | Yes, Claude Code | Yes, `Stop` | Non-interactive `plan` mode |
 | gemini | Yes | Yes, `AfterAgent` | Non-interactive sandbox/plan mode |
 | opencode | Error receipt until approved runner exists | Yes, `session.idle` | Plugin loaded on next session |
-| pi | Error receipt until approved runner exists | Yes, `agent_end` | Global extension |
+| pi | Error receipt until approved runner exists | Yes, `agent_settled` | Global extension |
 | omp | Error receipt until approved runner exists | Yes, `agent_end` | User-level observer |
 | kimi | Error receipt until approved runner exists | Yes, `Stop` / `StopFailure` | Config format/version dependent |
 | zcode | Error receipt until approved runner exists | Yes, `Stop` | Preserves explicitly disabled hook policy |
 | hermes | Error receipt until approved runner exists | Yes, `on_session_end` | User-scoped Hermes plugin, summary is status-only |
 | openclaw | Error receipt until approved runner exists | Yes, `agent_end` | Native plugin, conversation access needed for last reply |
+| alma | No email execution adapter or subject prefix | Yes, `chat.message.didReceive` | Main reply only; live config reload |
 | dsh | Error receipt until approved runner exists | Conditional, `turn/end` | Uses an **already-installed** `dsh-hooks` profile plugin |
 
 Only three email execution adapters exist; the other eight prefixes are still recognized and produce a threaded error email. They are **not executed through Codex**. This is intentional: no unverified write-capable headless CLI commands are used for inbound email instructions.
@@ -36,6 +37,64 @@ EMA writes only its own managed file(s) and does not overwrite a file lacking th
 Reports follow EMA's language setting. Subjects use the available native session title, then the current question, then Agent/status as a fallback. Bodies contain the Agent, session ID, project folder, question, up to two recent conversation excerpts and final response when available. The question is capped at 4,000 characters, each context excerpt at 1,000 and the response at 10,000; omissions and truncation are indicated. Different Agent events provide different fields. The native session ID can itself be a local path. Email subjects start with `EMA 报告` or `EMA Report` according to the language setting; SQLite dedup and SMTP retry remain in use. EMA-started Codex sessions are not reported twice.
 
 Codex titles come from its local session index; recent context is read only when the native session and turn can be matched. Claude Code may read its matching local transcript for the user question. Pi and OpenCode use their native session interfaces. These lookups collect only user or assistant text excerpts, and do not send reasoning, tool output or complete transcripts. Agent sessions that cannot supply or reliably match this information are marked unavailable.
+
+## Alma registration and lifecycle
+
+Alma uses `~/.config/alma/hooks.json`. EMA appends one command to
+`hooks["chat.message.didReceive"]` with matcher `.*`, `timeout: 3000` (milliseconds)
+and `enabled: true`. The command is an absolute, shell-quoted `hooks/emit.sh alma`
+path under EMA's data directory, so Alma's working directory does not matter.
+The command receives `{hook,input,matcher}` JSON on stdin, including EOF without a
+newline. It emits no stdout and performs no network or SMTP operations.
+
+Only the main reply event is registered. Subagent completion is not registered.
+`input.threadId` identifies the session; `input.message.id` identifies a reply for
+stable deduplication, even if usage or JSON serialization changes. Result text
+comes from `input.response.content` (string or text parts), with assistant
+`input.message.parts` as a fallback. EMA also looks up the matching thread title,
+user question and up to two preceding user/assistant messages through the reply's
+own parent chain in Alma's local database. Reasoning, tool parts and usage are not
+included; the report uses the excerpt limits above.
+Missing thread/message IDs and other event types are discarded. When no explicit
+`input.cwd` is supplied, the project is reported as `unknown`; EMA never uses the
+hook process's arbitrary current directory as the project.
+
+Alma currently emits this completion event through its usage-dependent success
+path. Replies without usage, cancelled runs and failed runs are **not guaranteed
+to emit a hook**. EMA cannot report an event that Alma does not deliver. File
+changes reload automatically; no Alma restart or `alma hooks` CLI is needed.
+
+The gateway reconciles registration through the existing startup/minute loop.
+For explicit management without starting mail workers:
+
+```sh
+cargo build -p ema-core --release --bin ema-alma-hook
+./target/release/ema-alma-hook install
+./target/release/ema-alma-hook status
+./target/release/ema-alma-hook uninstall
+# An alternate absolute EMA data directory may be supplied as the second argument.
+```
+
+On macOS the default data directory is
+`~/Library/Application Support/xin.ema.gateway`. `status` reports registration,
+enabled state, executable availability and whether the collector heartbeat is
+fresh. A registered hook only captures while EMA has a configured mailbox and
+refreshes `hooks/active` (20-second freshness limit). Installation alone does not
+start EMA or enable email. Existing disabled EMA entries remain disabled.
+Uninstall removes only this data directory's Alma command, retains other hooks
+and the shared shim, and writes `hooks/alma.disabled` so automatic reconciliation
+does not reinstall it. Explicit `install` removes that marker. Non-empty configs
+are backed up to `hooks.ema-before-hook.bak` before their first change; invalid
+JSON or incompatible schemas are preserved and explicit installation returns an
+error. The local Alma API can inspect the loaded configuration with
+`GET http://localhost:23001/api/hooks`.
+
+For SMTP-free verification, run `cargo test -p ema-core alma_`. The tests execute
+the configured shell command from `/` with a newline-free Alma payload, using a
+private disposable queue and SQLite database under this repo's `target/hook-tests`.
+They run only the hook collector, never mail workers, and check that duplicate
+replies yield one queued report and zero sent reports. Temporary files are removed
+when each test finishes.
 
 ## Operational verification
 

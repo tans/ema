@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, CircleHelp,
-  Mail, Settings2, ShieldCheck, Send, Activity
+  Mail, Settings2, ShieldCheck, Send, Activity, Eye, EyeOff
 } from "lucide-react";
 import "./style.css";
 import { Archive } from "lucide-react";
@@ -22,13 +22,7 @@ type Settings = {
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean; onboarding_completed: boolean;
 };
-type Stats = {
-  total_sessions: number; pending_jobs: number; running_jobs: number;
-  hook_reports: number; hook_sent: number; hook_pending: number;
-  completed_jobs: number; failed_jobs: number; received_messages: number;
-  last_activity: number | null;
-};
-type View = "welcome" | "dashboard" | "settings" | "history";
+type View = "welcome" | "settings" | "history";
 type Step = 1 | 2 | 3;
 type SettingsTab = "mail" | "allowlist" | "agents";
 
@@ -49,7 +43,7 @@ const initial: Settings = {
 const labels = {
   "zh-CN": {
     language: "语言", skipAll: "跳过引导", skipStep: "跳过此步", back: "上一步",
-    settings: "设置", home: "运行概览", history: "邮件记录", setup: "初始设置", step: "步骤",
+    settings: "设置", history: "邮件记录", setup: "初始设置", step: "步骤",
     emailStep: "连接邮箱", allowStep: "设置白名单", testStep: "发送测试邮件",
     emailDesc: "连接日常邮箱，授权码会以明文保存在本机用户目录。",
     allowDesc: "只有下列邮箱地址发来的任务才允许进入 Agent。",
@@ -68,12 +62,6 @@ const labels = {
     testNoDelivery: "发信成功不代表邮件一定投递或已被收到。",
     finish: "完成", finishEnable: "完成并启用 EMA", finishSkip: "完成但暂不启用",
     running: "已启用", paused: "未启用",
-    runningDesc: "正在监控符合白名单与主题前缀规则的新邮件",
-    pausedDesc: "邮件任务已暂停；本机 Agent 完成后仍会自动邮件汇报",
-    overviewStats: "会话统计", sessions: "总会话", active: "执行中", queued: "排队中",
-    completed: "已完成", failed: "失败 / 中断", received: "任务邮件",
-    hookHeading: "本机会话汇报", hooksCaptured: "已捕获", hooksSent: "已发送", hooksWaiting: "待发送",
-    lastActivity: "最近活动", none: "暂无活动",
     mailboxConfig: "邮箱连接", agent: "本地 Agent", hookNotice: "启动 EMA 后自动接入已安装的本机 Agent Hook，任务完成时汇报到当前邮箱。邮件可能包含会话标题、用户问题、近期对话和执行结果，请注意其中的敏感信息。",
     unavailable: "未检测到", available: "可用",
     routes: "邮件主题前缀", notSupported: "全部前缀默认生效。当前支持 Codex、Claude Code、Gemini 执行，其他 Agent 会自动邮件回复不支持的原因。",
@@ -90,7 +78,7 @@ const labels = {
   },
   en: {
     language: "Language", skipAll: "Skip setup", skipStep: "Skip this step", back: "Back",
-    settings: "Settings", home: "Overview", history: "Mail history", setup: "Get started", step: "Step",
+    settings: "Settings", history: "Mail history", setup: "Get started", step: "Step",
     emailStep: "Connect email", allowStep: "Sender allowlist", testStep: "Send a test email",
     emailDesc: "Connect your everyday mailbox. Your app password is stored as plain text in your local user directory.",
     allowDesc: "Only these email addresses may submit tasks to an Agent.",
@@ -109,12 +97,6 @@ const labels = {
     testNoDelivery: "SMTP acceptance does not guarantee delivery or receipt.",
     finish: "Finish", finishEnable: "Finish and enable EMA", finishSkip: "Finish without enabling",
     running: "Enabled", paused: "Disabled",
-    runningDesc: "Monitoring new emails with allowed senders and agent prefixes",
-    pausedDesc: "Inbound tasks are paused; local Agent completion reports remain automatic",
-    overviewStats: "Session statistics", sessions: "Sessions", active: "Running", queued: "Queued",
-    completed: "Completed", failed: "Failed / interrupted", received: "Task emails",
-    hookHeading: "Local Agent reports", hooksCaptured: "Captured", hooksSent: "Sent", hooksWaiting: "Pending",
-    lastActivity: "Last activity", none: "No activity yet",
     mailboxConfig: "Email connection", agent: "Local Agents", hookNotice: "EMA automatically attaches local Agent completion hooks and emails reports to this mailbox while running. Reports may contain sensitive session titles, questions, recent conversation and results.",
     unavailable: "Not found", available: "Available",
     routes: "Subject prefixes", notSupported: "All prefixes are active. Codex, Claude Code and Gemini run; other agents receive an explanatory email.",
@@ -143,7 +125,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [secret, setSecret] = useState("");
   const [needsMailSecret, setNeedsMailSecret] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [showSecret, setShowSecret] = useState(false);
   const [routesOpen, setRoutesOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -172,10 +154,6 @@ export default function App() {
     patchMail(selected === "qq" ? { address: value, username: value } : { address: value });
   }
 
-  async function refreshStats() {
-    try { setStats(await invoke<Stats>("get_stats")); }
-    catch { /* Preserve previous metrics while disconnected. */ }
-  }
   useEffect(() => {
     invoke<Settings>("get_settings").then(async value => {
       const configured = value.mail.address || value.mail.imap_host;
@@ -183,12 +161,10 @@ export default function App() {
       setSettings(resolved);
       setTestRecipient(resolved.allowlist[0] ?? "");
       setAllowlistText(resolved.allowlist.join("\n"));
-      setView(resolved.onboarding_completed ? "dashboard" : "welcome");
+      setView(resolved.onboarding_completed ? "history" : "welcome");
       if (resolved.mail.address.trim()) setNeedsMailSecret(!(await invoke<boolean>("has_mail_secret")));
     }).catch(e => setNotice(String(e))).finally(() => setLoading(false));
-    void refreshStats();
-    const timer = setInterval(() => { void refreshStats(); }, 12000);
-    return () => clearInterval(timer);
+    invoke<string>("get_secret", { name: "mail" }).then(v => { if (v) setSecret(v); }).catch(() => {});
   }, []);
 
   async function persist(next: Settings, showSaved = false): Promise<boolean> {
@@ -254,7 +230,7 @@ export default function App() {
   async function finishGuide(enable = false) {
     const canEnable = enable && testSent && connectionOk && !!settings.mail.address && settings.allowlist.length > 0;
     const next = { ...settings, onboarding_completed: true, enabled: canEnable || settings.enabled };
-    if (await persist(next)) { setView("dashboard"); setNotice(""); void refreshStats(); }
+    if (await persist(next)) { setView("history"); setNotice(""); }
   }
   function skipStep() {
     setNotice("");
@@ -263,25 +239,11 @@ export default function App() {
       setStep((step + 1) as Step);
     } else void finishGuide(false);
   }
-  async function goHome() {
-    try {
-      const saved = await invoke<Settings>("get_settings");
-      setSettings(saved);
-      setAllowlistText(saved.allowlist.join("\n"));
-    } catch (e) { setNotice(String(e)); }
-    setSecret("");
-    setNotice("");
-    setView("dashboard");
-    void refreshStats();
-  }
   function openGuide() {
     setStep(1); setConnectionOk(false); setTestSent(false);
     setTestRecipient(settings.allowlist[0] ?? "");
     setNotice(""); setView("welcome");
   }
-  const lastActivity = stats?.last_activity
-    ? new Date(stats.last_activity * 1000).toLocaleString(language === "en" ? "en-US" : "zh-CN")
-    : t.none;
 
   function mailboxFields() {
     return <div className="form-body">
@@ -309,9 +271,15 @@ export default function App() {
         </div>
       </>}
       <label className="field"><span>{selected === "qq" ? t.auth : t.password}</span>
-        <input type="password" autoComplete="new-password" value={secret}
-          placeholder={selected === "qq" ? t.authPlaceholder : t.keepSecret}
-          onChange={e => { setSecret(e.target.value); setConnectionOk(false); }} /></label>
+        <div className="secret-input">
+          <input type={showSecret ? "text" : "password"} autoComplete="new-password" value={secret}
+            placeholder={selected === "qq" ? t.authPlaceholder : t.keepSecret}
+            onChange={e => { setSecret(e.target.value); setConnectionOk(false); }} />
+          <button type="button" className="secret-toggle" tabIndex={-1}
+            onClick={() => setShowSecret(!showSecret)}>
+            {showSecret ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        </div></label>
       <p className="field-hint">{t.secretStorage}</p>
       <div className="inline-actions">
         {selected === "qq" && <a href="https://help.mail.qq.com/detail/106/985" target="_blank" rel="noreferrer">{t.getCode}</a>}
@@ -373,49 +341,6 @@ export default function App() {
           {testSent && connectionOk ? t.finishEnable : t.finish}<ArrowRight size={15}/></button>}
       </div>
     </section>;
-  }
-
-  function dashboard() {
-    const metrics = [
-      { label: t.sessions, value: stats?.total_sessions ?? 0, prominent: true },
-      { label: t.active, value: stats?.running_jobs ?? 0 },
-      { label: t.queued, value: stats?.pending_jobs ?? 0 },
-      { label: t.completed, value: stats?.completed_jobs ?? 0 },
-      { label: t.failed, value: stats?.failed_jobs ?? 0 },
-      { label: t.received, value: stats?.received_messages ?? 0 }
-    ];
-    return <div className="dashboard">
-      {needsMailSecret && <div className="alert notice" role="alert">
-        <span>{t.missingSecret}</span>{" "}
-        <button className="btn text-button" type="button" onClick={() => { setSettingsTab("mail"); setView("settings"); }}>{t.mailboxConfig}</button>
-      </div>}
-      <div className={"status-card " + (settings.enabled ? "live" : "")}>
-        <div className="status-card-top"><Activity size={17}/><span>{t.home}</span></div>
-        <div className="status-heading"><span className="status-indicator"/><h1>{settings.enabled ? t.running : t.paused}</h1></div>
-        <p>{settings.enabled ? t.runningDesc : t.pausedDesc}</p>
-      </div>
-      <section className="dashboard-section">
-        <div className="section-heading"><h2>{t.overviewStats}</h2></div>
-        <div className="metric-grid">
-          {metrics.map(metric => <div className={"metric " + (metric.prominent ? "prominent" : "")} key={metric.label}>
-            <span>{metric.label}</span><strong>{metric.value}</strong>
-          </div>)}
-        </div>
-      </section>
-      <section className="dashboard-section">
-        <div className="section-heading"><h2>{t.hookHeading}</h2></div>
-        <div className="metric-grid">
-          {[
-            {label:t.hooksCaptured,value:stats?.hook_reports ?? 0},
-            {label:t.hooksSent,value:stats?.hook_sent ?? 0},
-            {label:t.hooksWaiting,value:stats?.hook_pending ?? 0}
-          ].map(metric => <div className="metric" key={metric.label}>
-            <span>{metric.label}</span><strong>{metric.value}</strong>
-          </div>)}
-        </div>
-      </section>
-      <div className="dashboard-bottom"><span>{t.lastActivity}</span><strong>{lastActivity}</strong></div>
-    </div>;
   }
 
   function settingsPanel() {
@@ -487,10 +412,6 @@ export default function App() {
         <div className="brand-title"><strong>EMA</strong><span>Email Agent</span></div>
       </div>
       <nav className="main-nav" aria-label={t.settings}>
-        <button className={"main-nav-item " + (view === "dashboard" ? "active" : "")}
-          type="button" onClick={() => { void goHome(); }}>
-          <Activity size={17}/>{t.home}
-        </button>
         <button className={"main-nav-item " + (view === "history" ? "active" : "")}
           type="button" onClick={() => { setNotice(""); setView("history"); }}>
           <Archive size={17}/><span>{t.history}</span>
@@ -509,9 +430,6 @@ export default function App() {
       <header className="header">
         <div className="mobile-brand"><img src="/ema-logo.svg" alt=""/>EMA</div>
         {view !== "welcome" && <nav className="mobile-nav" aria-label={t.settings}>
-          <button type="button" className={view === "dashboard" ? "active" : ""}
-            aria-label={t.home} title={t.home} aria-current={view === "dashboard" ? "page" : undefined}
-            onClick={() => { void goHome(); }}><Activity size={17}/></button>
           <button type="button" className={view === "history" ? "active" : ""}
             aria-label={t.history} title={t.history} aria-current={view === "history" ? "page" : undefined}
             onClick={() => { setNotice(""); setView("history"); }}><Archive size={17}/></button>
@@ -519,7 +437,7 @@ export default function App() {
             aria-label={t.settings} title={t.settings} aria-current={view === "settings" ? "page" : undefined}
             onClick={() => { setNotice(""); setView("settings"); }}><Settings2 size={17}/></button>
         </nav>}
-        <div className="header-context">{view === "dashboard" ? t.home : view === "settings" ? t.settings : view === "history" ? t.history : t.setup}</div>
+        <div className="header-context">{view === "settings" ? t.settings : view === "history" ? t.history : t.setup}</div>
         <div className="header-right">
           {view === "welcome" && <button type="button" className="header-link"
             disabled={saving || sending || testing} onClick={() => { void finishGuide(false); }}>
@@ -535,7 +453,7 @@ export default function App() {
         </div>
       </header>
       <div className="app-content">
-        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : view === "history" ? <MailHistory language={language}/> : dashboard()}
+        {view === "welcome" ? guide() : view === "settings" ? settingsPanel() : <MailHistory language={language}/>}
       </div>
     </div>
   </main>;
