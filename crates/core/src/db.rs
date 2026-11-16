@@ -352,15 +352,25 @@ impl Database {
     }
     pub fn record_incoming(&self, mailbox: &str, validity: u32, mail: &crate::mail::FetchedMail) -> Result<()> {
         self.lock()?.execute("INSERT OR IGNORE INTO mail_inbox
-            (mailbox,uid_validity,uid,message_id,sender,recipient,cc,refs,original_date,subject,body,status,archive_note,created_at)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'processing',?12,strftime('%s','now'))",
+            (mailbox,uid_validity,uid,message_id,sender,recipient,cc,refs,original_date,subject,body,status,archive_note,kind,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'processing',?12,'unrelated',strftime('%s','now'))",
             params![mailbox,validity,mail.uid,mail.message_id,mail.sender,mail.recipient,mail.cc,
                 mail.references,mail.original_date,mail.subject,mail.body,mail.archive_note])?;
         Ok(())
     }
     pub fn incoming_result(&self, mailbox: &str, validity: u32, uid: u32, status: &str, detail: &str) -> Result<()> {
-        self.lock()?.execute("UPDATE mail_inbox SET status=?4,detail=?5 WHERE mailbox=?1 AND uid_validity=?2 AND uid=?3 AND status IN ('processing','retry')",
-            params![mailbox,validity,uid,status,detail])?;
+        let (kind, reason) = match status {
+            "echo" => (Some("echo"), "EMA-generated message; no task or reply"),
+            "ordinary" => (Some("unrelated"), "No recognized Agent prefix or known conversation reference"),
+            "automated" => (Some("unrelated"), "Automated or bulk message"),
+            "unauthorized" | "empty" | "access_denied" | "owner_mismatch" | "unsupported"
+                | "not_installed" | "unavailable_runner" | "missing_session" | "malformed"
+                | "too_large_for_task" | "unavailable" => (Some("invalid"), status),
+            _ => (None, status),
+        };
+        let detail = if detail.is_empty() { reason } else { detail };
+        self.lock()?.execute("UPDATE mail_inbox SET status=?4,detail=?5,kind=COALESCE(?6,kind) WHERE mailbox=?1 AND uid_validity=?2 AND uid=?3 AND status IN ('processing','retry')",
+            params![mailbox,validity,uid,status,detail,kind])?;
         Ok(())
     }
     pub fn mail_history(&self, search: &str, offset: i64) -> Result<Vec<MailRecord>> {

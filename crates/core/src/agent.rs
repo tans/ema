@@ -33,6 +33,9 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     let mut cmd = Command::new(executable);
     cmd.arg("exec").arg("--json").arg("-C").arg(&cwd)
         .arg("--sandbox").arg(if config.workspace_write { "workspace-write" } else { "read-only" });
+    // Mail-only sessions use an isolated directory rather than a Git checkout.
+    // This skips repository detection while retaining the configured sandbox.
+    if session.project == "_agent_memory" { cmd.arg("--skip-git-repo-check"); }
     if let Some(existing) = &session.agent_session {
         cmd.arg("resume").arg(existing);
     }

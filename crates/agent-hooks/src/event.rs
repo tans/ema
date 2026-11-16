@@ -87,6 +87,9 @@ pub fn extract(agent: &'static str, wire_event_type: &str, v: &Value) -> Normali
     if prompt.trim().is_empty() {
         prompt = content(&v["prompt"]);
     }
+    if agent == "codex" && prompt.trim().is_empty() {
+        prompt = content(&v["input-messages"]);
+    }
     let response = field(
         v,
         &["last-assistant-message", "last_assistant_message", "prompt_response", "response"],
@@ -135,5 +138,22 @@ pub fn extract(agent: &'static str, wire_event_type: &str, v: &Value) -> Normali
         prompt_truncated: v["prompt_truncated"].as_bool() == Some(true),
         response_truncated: v["response_truncated"].as_bool() == Some(true),
         raw: v.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn codex_native_notify_preserves_input_messages() {
+        let raw = serde_json::json!({
+            "type": "agent-turn-complete", "thread-id": "native-session", "turn-id": "native-turn",
+            "cwd": "/tmp/mail-qa", "client": "exec",
+            "input-messages": ["核对邮件内容", "保留中文指令"],
+            "last-assistant-message": "内容已核对"
+        });
+        let event = super::extract("codex", "agent-turn-complete", &raw);
+        assert_eq!(event.prompt, "核对邮件内容\n保留中文指令");
+        assert_eq!(event.response, "内容已核对");
+        assert_eq!(event.session_id, "native-session");
     }
 }

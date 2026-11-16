@@ -123,7 +123,7 @@ impl Gateway {
             tracing::warn!("mail rejected: unauthorized sender");
             return Ok("unauthorized");
         }
-        if incoming.body.trim().is_empty() { return Ok("empty"); }
+        if incoming.body.trim().is_empty() { return self.reject_empty(cfg, &incoming); }
         let mut body = incoming.body.trim().to_string();
         // Workspace-write mode requires an additional out-of-band secret per message.
         // Remove the secret before handing user input to any model or persistence layer.
@@ -136,7 +136,7 @@ impl Gateway {
                 return Ok("access_denied");
             }
             body = body.lines().skip(1).collect::<Vec<_>>().join("\n");
-            if body.trim().is_empty() { return Ok("empty"); }
+            if body.trim().is_empty() { return self.reject_empty(cfg, &incoming); }
         }
         let previous = self.database.find_by_references(&incoming.references)?;
         let mut hook=self.database.find_hook_report(&incoming.references)?;
@@ -145,14 +145,11 @@ impl Gateway {
                 hook=self.database.find_hook_report(&[session.root_mid.clone()])?;
             }
         }
-        // Only known threads may be continued from the gateway's own address.
-        // Its generated messages are filtered by Message-ID above.
-        if incoming.sender.eq_ignore_ascii_case(&cfg.mail.address) && previous.is_none() && hook.is_none() {
-            return Ok("ordinary");
-        }
+        // The allowlisted mailbox owner may send new tasks to themselves.
+        // EMA-generated mail was already excluded by its headers/body marker above.
         if previous.is_some() || hook.is_some() {
             body=reply_text(&body);
-            if body.is_empty() { return Ok("empty"); }
+            if body.is_empty() { return self.reject_empty(cfg, &incoming); }
         }
         if let Some(ref session) = previous {
             if session.owner != incoming.sender {
@@ -241,6 +238,23 @@ impl Gateway {
         if stored.is_some() { self.outbox_ready.notify_one(); }
         Ok(if stored.is_none() { "duplicate" } else if enqueue { "queued" } else { "awaiting_directory" })
     }
+    fn reject_empty(&self, cfg: &Settings, incoming: &mail::Incoming) -> Result<&'static str> {
+        let previous = self.database.find_by_references(&incoming.references)?;
+        let hook = self.database.find_hook_report(&incoming.references)?;
+        let routed = router::route(cfg, &incoming.subject, "");
+        let agent = previous.as_ref().map(|s| s.agent.as_str())
+            .or_else(|| hook.as_ref().map(|h| h.agent.as_str()))
+            .or_else(|| routed.as_ref().map(|r| r.agent.as_str()));
+        if let Some(agent) = agent {
+            self.database.queue_route_error(
+                &incoming.message_id, &incoming.sender, &cfg.mail.address, &incoming.subject,
+                &fmt::route_error(&cfg.language, agent, "", "", "EMPTY_BODY",
+                    text(&cfg.language, "邮件正文为空，或只包含引用内容。", "The message body is empty or contains only quoted content."),
+                    text(&cfg.language, "请填写本次指令后重新发送或回复。", "Add an instruction and resend or reply.")), &incoming.references)?;
+            self.outbox_ready.notify_one();
+        }
+        Ok("empty")
+    }
     async fn job_loop(self: Arc<Self>) {
         loop {
             let cfg = self.settings();
@@ -318,4 +332,59 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let mut diff = 0_u8;
     for (x,y) in a.iter().zip(b) { diff |= x ^ y; }
     diff == 0
+}
+
+#[cfg(test)]
+mod mail_regression_tests {
+    use super::*;
+
+    fn gateway() -> (Arc<Gateway>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("ema-mail-regression-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = Settings::default();
+        cfg.mail.address = "owner@example.com".into();
+        cfg.allowlist = vec![cfg.mail.address.clone()];
+        cfg.codex_command = dir.join("missing-codex").to_string_lossy().into_owned();
+        cfg.write(&dir).unwrap();
+        (Gateway::open(dir.clone()).unwrap(), dir)
+    }
+    fn incoming(body: &str) -> mail::Incoming {
+        mail::Incoming { uid: 1, message_id: "<user-task@example.com>".into(),
+            sender: "owner@example.com".into(), subject: "codex Check mail".into(),
+            body: body.into(), references: vec![], automated: false, ema_kind: None, ema_message_id: None }
+    }
+    #[tokio::test]
+    async fn allowlisted_self_mail_reaches_codex_routing() {
+        let (gateway, dir) = gateway();
+        assert_eq!(gateway.on_message(&gateway.settings(), incoming("Only read.")).await.unwrap(), "not_installed");
+        let outgoing = gateway.database.pending_outbox(true).unwrap();
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].kind, "error");
+        assert!(outgoing[0].body.contains("AGENT_NOT_INSTALLED"));
+        assert_eq!(gateway.database.stats().unwrap().total_sessions, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn empty_task_has_error_receipt_and_invalid_kind() {
+        let (gateway, dir) = gateway();
+        let message = incoming("");
+        let fetched = mail::FetchedMail { uid: 1, message_id: message.message_id.clone(),
+            sender: message.sender.clone(), recipient: message.sender.clone(), cc: String::new(),
+            references: String::new(), original_date: String::new(), subject: message.subject.clone(),
+            body: String::new(), archive_note: String::new(), message: None, problem: "" };
+        gateway.database.record_incoming(&message.sender, 1, &fetched).unwrap();
+        let status = gateway.on_message(&gateway.settings(), message.clone()).await.unwrap();
+        gateway.database.incoming_result(&message.sender, 1, 1, status, "").unwrap();
+        // Processing the same message twice must not produce another error receipt.
+        gateway.on_message(&gateway.settings(), message).await.unwrap();
+        let outgoing = gateway.database.pending_outbox(true).unwrap();
+        assert_eq!(outgoing.len(), 1);
+        assert!(outgoing[0].body.contains("EMPTY_BODY"));
+        let history = gateway.database.mail_history("", 0).unwrap();
+        let inbound = history.iter().find(|m| m.direction == "in").unwrap();
+        assert_eq!(inbound.kind, "invalid");
+        assert_eq!(inbound.detail, "empty");
+        assert_eq!(gateway.database.stats().unwrap().total_sessions, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
