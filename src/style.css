@@ -34,7 +34,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .app .settings-button { color: var(--ema-muted); }
 .app .back-button { padding-left: 0; color: var(--ema-muted); }
 .language { background: transparent; padding: 5px; color: var(--ema-muted); max-width: 110px; }
-.app-content { padding: 2px 8px 12px; margin: 0 auto; }
+.app-content { padding: 2px 8px 4px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100svh - 40px); }
 .login-gate { min-height: calc(100svh - 40px); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px; padding: 32px; }
 .app .login-button, .app .primary-button { background: #24272c; color: #fff; padding: 7px 16px; }
 .app .login-button:hover, .app .primary-button:hover:not(:disabled) { background: #42464d; }
@@ -84,7 +84,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .route-row { display: grid; align-items: center; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; color: #454b54; }
 @media (max-width: 600px) {
   .header { height: 40px; padding: 0 12px; }
-  .app-content { padding: 2px 6px 12px; }
+  .app-content { padding: 2px 6px 4px; }
   .login-gate { min-height: calc(100svh - 40px); }
   .settings-page { margin-top: 4px; padding: 8px 16px 24px; }
   .settings-nav { gap: 4px; }

@@ -25,7 +25,6 @@ const copy = {
     recorded: "记录时间", sentAt: "SMTP 接受时间", attempts: "发送尝试", messageId: "邮件 ID",
     content: "邮件正文", lastError: "最近一次发送错误", noBody: "没有可显示的正文", unknown: "未知", noSubject: "（无主题）",
     previous: "上一页", next: "下一页", page: "第", pageEnd: "页", failed: "加载失败，请刷新重试。",
-    coverage: "仅记录开始轮询后的新邮件；不保存附件。SMTP 接受不代表投递成功。",
     kinds: {
       echo: "回环", unrelated: "无关", new_task: "新任务", resume_task: "继续任务", invalid: "已拒绝",
       new_task_ack: "新任务回执", resume_ack: "继续回执", progress: "进度", result: "结果", error: "错误", hook: "Hook", test: "测试"
@@ -55,7 +54,6 @@ const copy = {
     recorded: "Recorded", sentAt: "Accepted by SMTP", attempts: "Send attempts", messageId: "Message ID",
     content: "Message body", lastError: "Most recent send error", noBody: "No body available", unknown: "Unknown", noSubject: "(No subject)",
     previous: "Previous", next: "Next", page: "Page", pageEnd: "", failed: "Could not load history. Refresh to retry.",
-    coverage: "Only new mail polled after recording begins is included; attachments are not saved. SMTP acceptance does not guarantee delivery.",
     kinds: {
       echo: "Echo", unrelated: "Unrelated", new_task: "New task", resume_task: "Resume", invalid: "Rejected",
       new_task_ack: "Task ack", resume_ack: "Resume ack", progress: "Progress", result: "Result", error: "Error", hook: "Hook", test: "Test"
@@ -138,7 +136,7 @@ export default function MailHistory({ language, search, version }: { language: "
             className={"history-row " + (mail.id === selected ? "selected" : "")}
             aria-pressed={mail.id === selected} onClick={() => setSelected(mail.id)}>
             <span className="history-row-top"><strong>{mail.subject || t.noSubject}</strong>{badge(mail)}<time title={date(mail.created_at)}>{shortDate(mail.created_at)}</time></span>
-            <span className="history-row-bottom"><span className="history-address">{mail.direction === "in" ? t.in : t.out} · {mail.direction === "in" ? mail.sender || t.unknown : mail.recipient || t.unknown}</span>
+            <span className="history-row-bottom"><span className="history-address">{mail.sender || t.unknown}</span>
               <span className="history-status" title={status(mail)}>{status(mail)}</span></span>
           </button>)}
         </div>
@@ -168,6 +166,5 @@ export default function MailHistory({ language, search, version }: { language: "
         <span>{t.page} {page + 1} {t.pageEnd}</span>
         <button type="button" className="btn btn-ghost btn-sm" disabled={rows.length <= 50} onClick={() => setPage(page + 1)}>{t.next}</button></div>
     </>}
-    <p className="history-coverage">{t.coverage}</p>
   </section>;
 }
