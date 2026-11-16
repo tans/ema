@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, CircleHelp,
-  Mail, Settings2, ShieldCheck, Send, Activity, Eye, EyeOff
-} from "lucide-react";
+  ArrowLeft, ArrowRight, Check, CheckCircle, ChevronDown, HelpCircle,
+  Mail, Sliders, Shield, Send, Activity, Eye, EyeOff
+} from "react-feather";
 import "./style.css";
-import { Archive } from "lucide-react";
+import { Archive } from "react-feather";
 import MailHistory from "./MailHistory";
 
 type MailSettings = {
@@ -288,7 +288,7 @@ export default function App() {
           {testing ? t.checking : t.checkConnection}
         </button>
       </div>
-      {connectionOk && <p className="success-text"><CheckCircle2 size={14} /> {t.connected}</p>}
+      {connectionOk && <p className="success-text"><CheckCircle size={14} /> {t.connected}</p>}
     </div>;
   }
 
@@ -299,7 +299,7 @@ export default function App() {
           placeholder="you@example.com"
           onChange={e => { setAllowlistText(e.target.value); patch({ allowlist: normalizeAllowlist(e.target.value) }); setTestSent(false); }} />
       </label>
-      <p className="field-hint"><ShieldCheck size={14} /> {t.senderHelp}</p>
+      <p className="field-hint"><Shield size={14} /> {t.senderHelp}</p>
     </div>;
   }
 
@@ -327,7 +327,7 @@ export default function App() {
         </label> : <p className="field-hint">{t.missingAllow}</p>}
         <button type="button" className="outline-button" disabled={sending || !testRecipient || !settings.mail.address}
           onClick={() => { void sendTest(); }}>{sending ? t.sending : t.sendTest}</button>
-        {testSent && <p className="success-text"><CheckCircle2 size={14} />{t.sent}</p>}
+        {testSent && <p className="success-text"><CheckCircle size={14} />{t.sent}</p>}
         <p className="field-hint">{t.testNoDelivery}</p>
       </div>}
       {notice && <div className="notice" role="status">{notice}</div>}
@@ -346,14 +346,14 @@ export default function App() {
   function settingsPanel() {
     const tabs: { id: SettingsTab; label: string; icon: typeof Mail }[] = [
       { id: "mail", label: t.mailboxConfig, icon: Mail },
-      { id: "allowlist", label: t.senders, icon: ShieldCheck },
+      { id: "allowlist", label: t.senders, icon: Shield },
       { id: "agents", label: t.agent, icon: Activity }
     ];
     const activeTab = tabs.find(tab => tab.id === settingsTab)!;
     return <div className="settings-page">
       <div className="page-title">
         <div><span className="eyebrow">{t.settings}</span><h1>{activeTab.label}</h1></div>
-        <button className="text-button" type="button" onClick={openGuide}><CircleHelp size={15}/>{t.reopenGuide}</button>
+        <button className="text-button" type="button" onClick={openGuide}><HelpCircle size={15}/>{t.reopenGuide}</button>
       </div>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t.settings}>
@@ -418,7 +418,7 @@ export default function App() {
         </button>
         <button className={"main-nav-item " + (view === "settings" ? "active" : "")}
           type="button" onClick={() => { setNotice(""); setView("settings"); }}>
-          <Settings2 size={17}/>{t.settings}
+          <Sliders size={17}/>{t.settings}
         </button>
       </nav>
       <div className="sidebar-bottom">
@@ -435,7 +435,7 @@ export default function App() {
             onClick={() => { setNotice(""); setView("history"); }}><Archive size={17}/></button>
           <button type="button" className={view === "settings" ? "active" : ""}
             aria-label={t.settings} title={t.settings} aria-current={view === "settings" ? "page" : undefined}
-            onClick={() => { setNotice(""); setView("settings"); }}><Settings2 size={17}/></button>
+            onClick={() => { setNotice(""); setView("settings"); }}><Sliders size={17}/></button>
         </nav>}
         <div className="header-context">{view === "settings" ? t.settings : view === "history" ? t.history : t.setup}</div>
         <div className="header-right">

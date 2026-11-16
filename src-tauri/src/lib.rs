@@ -127,7 +127,11 @@ pub fn run() {
             let open=tauri::menu::MenuItem::with_id(app,"open","Open Settings",true,None::<&str>)?;
             let exit=tauri::menu::MenuItem::with_id(app,"quit","Quit EMA",true,None::<&str>)?;
             let menu=tauri::menu::Menu::with_items(app,&[&open,&exit])?;
-            let tray=tauri::tray::TrayIconBuilder::new()
+            let mut tray=tauri::tray::TrayIconBuilder::new();
+            if let Some(icon)=app.default_window_icon() {
+                tray=tray.icon(icon.clone()).icon_as_template(cfg!(target_os="macos"));
+            }
+            let tray=tray
                 .tooltip("Email Agent Gateway").menu(&menu)
                 .on_menu_event(|app,event| {
                     match event.id().as_ref() {

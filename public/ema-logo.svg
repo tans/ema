@@ -1,9 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">EMA</title>
-  <desc id="desc">Blue envelope with a lime-green outgoing arrow</desc>
-  <rect x="5" y="5" width="118" height="118" rx="27" fill="#F9FAFC"/>
-  <path d="M29 43h70a9 9 0 0 1 9 9v38a9 9 0 0 1-9 9H29a9 9 0 0 1-9-9V52a9 9 0 0 1 9-9Z" fill="none" stroke="#0866FF" stroke-width="9" stroke-linejoin="round"/>
-  <path d="m25 49 32 26a11 11 0 0 0 14 0l32-26" fill="none" stroke="#0866FF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M71 84h25m-10-10 10 10-10 10" fill="none" stroke="#25E84F" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="100" cy="37" r="9" fill="#25E84F" stroke="#F9FAFC" stroke-width="4"/>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="128"
+  height="128"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#0866ff"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+  <polyline points="22,6 12,13 2,6" />
 </svg>

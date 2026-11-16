@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search } from "react-feather";
 import "daisyui/theme/light.css";
 import "daisyui/components/button.css";
 import "daisyui/components/input.css";
