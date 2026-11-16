@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use lettre::{message::{header::GenericHeader, Mailbox}, transport::smtp::authentication::Credentials, Message, SmtpTransport, Transport};
+use lettre::{message::{header::{HeaderName, HeaderValue}, Mailbox}, transport::smtp::authentication::Credentials, Message, SmtpTransport, Transport};
 use mailparse::{MailAddr, MailHeaderMap, ParsedMail};
 use crate::{config::MailSettings, db::Outbound};
 
@@ -182,13 +182,14 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     if !o.references.is_empty() { builder=builder.references(o.references.clone()); }
     // Self-identification headers: survive QQ Mail's Message-ID rewrite so our own
     // outbound mail coming back into the INBOX can be recognized and dropped as echo.
+    let msg = builder.body(o.body.clone())?;
+    let mut msg = msg;
     if !o.kind.is_empty() {
-        builder = builder.header(GenericHeader::new("X-EMA-Kind".to_string(), o.kind.clone()));
+        msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Kind"), o.kind.clone()));
     }
     if !o.message_id.is_empty() {
-        builder = builder.header(GenericHeader::new("X-EMA-Message-Id".to_string(), o.message_id.clone()));
+        msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Message-Id"), o.message_id.clone()));
     }
-    let msg=builder.body(o.body.clone())?;
     let builder = if c.smtp_port == 587 {
         SmtpTransport::starttls_relay(&c.smtp_host)?
     } else {
