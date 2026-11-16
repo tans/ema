@@ -368,7 +368,8 @@ impl Database {
             "echo" => (Some("echo"), "EMA-generated message; no task or reply"),
             "ordinary" => (Some("unrelated"), "No recognized Agent prefix or known conversation reference"),
             "automated" => (Some("unrelated"), "Automated or bulk message"),
-            "unauthorized" | "empty" | "access_denied" | "owner_mismatch" | "unsupported"
+            "unauthorized" => (Some("unrelated"), "Sender is not allowlisted"),
+            "empty" | "access_denied" | "owner_mismatch" | "unsupported"
                 | "not_installed" | "unavailable_runner" | "missing_session" | "malformed"
                 | "too_large_for_task" | "unavailable" => (Some("invalid"), status),
             _ => (None, status),

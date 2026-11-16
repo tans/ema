@@ -159,7 +159,7 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
               {selectedMail.message_id && <div><dt>{t.messageId}</dt><dd>{selectedMail.message_id}</dd></div>}
               {selectedMail.references && <div><dt>{t.references}</dt><dd>{selectedMail.references}</dd></div>}
             </dl></details>
-            {selectedMail.detail && <p className="history-error"><strong>{t.lastError}: </strong>{selectedMail.detail}</p>}
+            {selectedMail.direction === "out" && selectedMail.detail && <p className="history-error"><strong>{t.lastError}: </strong>{selectedMail.detail}</p>}
             {note(selectedMail.archive_note) && <p className="history-note">{note(selectedMail.archive_note)}</p>}
             <pre>{selectedMail.body || t.noBody}</pre>
         </article>}
