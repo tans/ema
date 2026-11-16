@@ -141,6 +141,11 @@ impl Database {
         drop(column_stmt);
         if !columns.iter().any(|name| name == "cwd") { c.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", [])?; }
         c.execute_batch("CREATE TABLE IF NOT EXISTS mail_cursors (mailbox TEXT PRIMARY KEY, last_uid INTEGER NOT NULL, uid_validity INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS local_replies (
+                message_id TEXT PRIMARY KEY, sender TEXT NOT NULL, mailbox TEXT NOT NULL,
+                refs TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'processing', detail TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_events (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS routing_replies (incoming_mid TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_context (message_id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_session TEXT NOT NULL, cwd TEXT NOT NULL);
@@ -374,6 +379,12 @@ impl Database {
         Ok(())
     }
     pub fn mail_history(&self, search: &str, offset: i64) -> Result<Vec<MailRecord>> {
+        self.mail_records(search, offset, "")
+    }
+    pub fn mail_record(&self, id: &str) -> Result<Option<MailRecord>> {
+        Ok(self.mail_records("", 0, id)?.into_iter().next())
+    }
+    fn mail_records(&self, search: &str, offset: i64, id: &str) -> Result<Vec<MailRecord>> {
         let c = self.lock()?;
         let mut stmt = c.prepare("SELECT id,message_id,direction,sender,mailbox,recipient,cc,refs,original_date,subject,body,status,detail,archive_note,created_at,sent_at,attempts,kind FROM (
             SELECT 'in:'||mailbox||':'||uid_validity||':'||uid AS id,message_id,'in' AS direction,
@@ -383,18 +394,34 @@ impl Database {
             SELECT 'out:'||id,message_id,'out',sender,'',recipient,'',refs,'',subject,body,state,last_error,'',created_at,sent_at,
               CASE WHEN state='sent' AND sent_at IS NULL THEN NULL ELSE attempts END,kind FROM outbox
             UNION ALL
+            SELECT 'local:'||message_id,message_id,'in',sender,mailbox,mailbox,'',refs,'',subject,body,status,detail,'local_reply',created_at,NULL,0,kind FROM local_replies
+            UNION ALL
             SELECT 'legacy:'||m.message_id,m.message_id,'in',s.owner,'','','','','','','','legacy','','legacy',m.created_at,NULL,0,'legacy'
               FROM messages m JOIN sessions s ON m.session_id=s.id
               WHERE m.direction='in' AND NOT EXISTS (SELECT 1 FROM mail_inbox i WHERE i.message_id=m.message_id)
-            ) WHERE ?1='' OR instr(lower(message_id||' '||sender||' '||mailbox||' '||recipient||' '||cc||' '||refs||' '||subject||' '||body),lower(?1))>0
+                AND NOT EXISTS (SELECT 1 FROM local_replies l WHERE l.message_id=m.message_id)
+            ) WHERE (?3='' OR id=?3) AND (?1='' OR instr(lower(message_id||' '||sender||' '||mailbox||' '||recipient||' '||cc||' '||refs||' '||subject||' '||body),lower(?1))>0)
             ORDER BY created_at IS NULL,created_at DESC,id DESC LIMIT 51 OFFSET ?2")?;
-        let rows=stmt.query_map(params![search.trim(),offset.max(0)],|r|Ok(MailRecord {
+        let rows=stmt.query_map(params![search.trim(),offset.max(0),id],|r|Ok(MailRecord {
             id:r.get(0)?,message_id:r.get(1)?,direction:r.get(2)?,sender:r.get(3)?,mailbox:r.get(4)?,
             recipient:r.get(5)?,cc:r.get(6)?,references:r.get(7)?,original_date:r.get(8)?,
             subject:r.get(9)?,body:r.get(10)?,status:r.get(11)?,detail:r.get(12)?,archive_note:r.get(13)?,
             created_at:r.get(14)?,sent_at:r.get(15)?,attempts:r.get(16)?,kind:r.get(17)?,
         }))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+    pub fn record_local_reply(&self, mid:&str, sender:&str, mailbox:&str, reference:&str, subject:&str, body:&str) -> Result<()> {
+        let c=self.lock()?;
+        c.execute("INSERT OR IGNORE INTO local_replies(message_id,sender,mailbox,refs,subject,body,kind,created_at)
+            VALUES(?1,?2,?3,?4,?5,?6,'resume_task',strftime('%s','now'))",params![mid,sender,mailbox,reference,subject,body])?;
+        let same:bool=c.query_row("SELECT sender=?2 AND mailbox=?3 AND refs=?4 AND body=?5 FROM local_replies WHERE message_id=?1",
+            params![mid,sender,mailbox,reference,body],|r|r.get(0))?;
+        anyhow::ensure!(same,"Reply request ID was already used for another instruction");
+        Ok(())
+    }
+    pub fn local_reply_result(&self, mid:&str, status:&str, detail:&str) -> Result<()> {
+        self.lock()?.execute("UPDATE local_replies SET status=?2,detail=?3,kind=CASE WHEN ?2 IN ('queued','duplicate','awaiting_directory') THEN 'resume_task' ELSE 'invalid' END WHERE message_id=?1",params![mid,status,detail])?;
+        Ok(())
     }
     pub fn claim(&self) -> Result<Option<Job>> {
         let mut c = self.lock()?;

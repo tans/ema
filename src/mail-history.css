@@ -47,3 +47,28 @@
 .mail-kind-result { background: #eaf5ef; color: #286844; }
 .mail-kind-progress { background: #f2effa; color: #69508e; }
 .mail-kind-error { background: #fff0ed; color: #a2392e; }
+
+.agent-reply { margin: 0 0 16px; padding: 12px; background: var(--color-base-200); border-radius: 6px; }
+.reply-heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+.reply-heading strong { flex: 1; font-weight: 550; }
+.reply-agent { display: inline-flex; align-items: center; gap: 5px; color: var(--color-primary); font-weight: 650; }
+.history-detail .reply-context { gap: 7px; margin: 10px 0 0; }
+.history-detail .reply-context > div { grid-template-columns: 90px minmax(0, 1fr); gap: 8px; }
+.reply-context dt { display: flex; align-items: center; gap: 4px; }
+.reply-context dd { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.reply-directory, .reply-session { color: var(--color-base-content); font-weight: 550; }
+.reply-ema-session { color: var(--ema-muted); }
+.reply-compose { display: grid; gap: 7px; margin-top: 14px; }
+.reply-compose label { font-size: 12px; font-weight: 550; }
+.app .reply-compose .textarea { width: 100%; min-height: 110px; padding: 10px; resize: vertical; border: 0; box-shadow: none; background: var(--color-base-100); color: var(--color-base-content); font: inherit; font-size: 12px; line-height: 1.6; }
+.reply-compose .textarea:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.reply-compose-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.reply-compose-footer > div { display: flex; gap: 6px; margin-left: auto; }
+.reply-hint, .reply-error, .reply-success, .reply-load-error { margin: 8px 0 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.reply-hint, .reply-load-error { color: var(--ema-muted); }
+.reply-error { color: var(--color-error); }
+.reply-success { color: var(--color-success); }
+@media (max-width: 640px) {
+  .agent-reply { padding: 10px; }
+  .history-detail .reply-context > div { grid-template-columns: 76px minmax(0, 1fr); }
+}

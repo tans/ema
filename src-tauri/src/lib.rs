@@ -36,6 +36,14 @@ fn get_stats(state: tauri::State<'_, Arc<Gateway>>) -> Result<ema_core::db::Stat
 fn get_mail_history(state: tauri::State<'_, Arc<Gateway>>, search: String, offset: i64) -> Result<Vec<ema_core::db::MailRecord>, String> {
     state.database.mail_history(&search, offset).map_err(|e| e.to_string())
 }
+#[tauri::command]
+fn get_mail_reply_context(state: tauri::State<'_, Arc<Gateway>>, record_id: String) -> Result<Option<ema_core::ReplyContext>, String> {
+    state.mail_reply_context(&record_id).map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn reply_to_mail(state: tauri::State<'_, Arc<Gateway>>, record_id: String, request_id: String, body: String) -> Result<String, String> {
+    state.inner().clone().reply_to_mail(&record_id,&request_id,&body).await.map_err(|e|format!("{e:#}"))
+}
 #[derive(Serialize)]
 struct DetectedAgent { name: &'static str, installed: bool, supported: bool }
 
@@ -149,7 +157,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,save_settings,set_secret,has_mail_secret,get_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail,
-            get_mail_history
+            get_mail_history,get_mail_reply_context,reply_to_mail
         ])
         .on_window_event(|window,event| {
             if let WindowEvent::CloseRequested{api,..}=event {

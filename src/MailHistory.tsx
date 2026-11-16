@@ -6,6 +6,7 @@ import "daisyui/components/button.css";
 import "daisyui/components/input.css";
 import "daisyui/components/badge.css";
 import "./mail-history.css";
+import AgentReply from "./AgentReply";
 
 type MailRecord = {
   id: string; message_id: string; direction: "in" | "out";
@@ -39,6 +40,7 @@ const copy = {
       too_large_for_task: "未进入任务：邮件超过处理大小", unavailable: "邮件已不可获取"
     },
     notes: {
+      local_reply: "从 EMA 内提交的会话指令；回执和结果通过邮件返回。",
       html: "此邮件仅有 HTML 正文，下方显示源文本。", truncated: "正文超过 20 万字符，已截断。",
       html_truncated: "此邮件仅有 HTML 正文，源文本超过 20 万字符，已截断。",
       too_large: "邮件超过 16 MiB，仅保存邮件头信息。", unreadable: "邮件正文无法解析。",
@@ -68,6 +70,7 @@ const copy = {
       too_large_for_task: "Not a task: message too large", unavailable: "Message no longer available"
     },
     notes: {
+      local_reply: "Conversation instruction submitted in EMA. Acknowledgment and results arrive by email.",
       html: "This message only has HTML; its source is shown below.", truncated: "The body exceeded 200,000 characters and was truncated.",
       html_truncated: "This HTML source exceeded 200,000 characters and was truncated.",
       too_large: "This message exceeded 16 MiB; only headers were recorded.", unreadable: "The body could not be parsed.",
@@ -79,6 +82,7 @@ const copy = {
 export default function MailHistory({ language, search, version }: { language: "zh-CN" | "en"; search: string; version: number }) {
   const t = copy[language];
   const [page, setPage] = useState(0);
+  const [replyVersion, setReplyVersion] = useState(0);
   const [rows, setRows] = useState<MailRecord[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,7 +105,7 @@ export default function MailHistory({ language, search, version }: { language: "
         .finally(() => { if (current) setLoading(false); });
     }, 200);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [search, page, version]);
+  }, [search, page, version, replyVersion]);
 
   const selectedMail = rows.slice(0, 50).find(item => item.id === selected);
   const date = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language) : t.unknown;
@@ -124,10 +128,10 @@ export default function MailHistory({ language, search, version }: { language: "
 
   return <section className="history-page" aria-label={t.title}>
     {error && <p className="history-error" role="alert">{t.failed} {error}</p>}
-    {loading && <p className="history-message" role="status">{t.loading}</p>}
+    {loading && rows.length === 0 && <p className="history-message" role="status">{t.loading}</p>}
     {!loading && !error && rows.length === 0 && <div className="history-message"><strong>{search ? t.noMatches : t.empty}</strong>
       {!search && <p>{t.emptyHelp}</p>}</div>}
-    {!loading && !error && rows.length > 0 && <>
+    {!error && rows.length > 0 && <>
       <div className={"history-layout " + (selectedMail ? "reading" : "")}>
         <div className="history-list" aria-label={t.title}>
           {rows.slice(0, 50).map(mail => <button type="button" key={mail.id}
@@ -142,6 +146,7 @@ export default function MailHistory({ language, search, version }: { language: "
             <button type="button" className="btn btn-ghost detail-back" onClick={() => setSelected(null)}><ArrowLeft size={16}/>{t.back}</button>
             <div className="history-detail-top">{badge(selectedMail)}<span>{selectedMail.direction === "in" ? t.in : t.out}</span><span>{status(selectedMail)}</span></div>
             <h2>{selectedMail.subject || t.noSubject}</h2>
+            <AgentReply recordId={selectedMail.id} language={language} version={version + replyVersion} onSubmitted={() => setReplyVersion(value => value + 1)}/>
             <details className="message-metadata"><summary>{t.metadata}</summary><dl>
               <div><dt>{t.from}</dt><dd>{selectedMail.sender || t.unknown}</dd></div>
               <div><dt>{t.to}</dt><dd>{selectedMail.recipient || t.unknown}</dd></div>
