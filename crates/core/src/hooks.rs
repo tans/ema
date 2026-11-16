@@ -225,7 +225,7 @@ mod alma_tests {
         let v = payload();
         let (session, subject, body) = format_report("alma", &v).expect("Alma main reply");
         assert_eq!(session, "alma-thread");
-        assert_eq!(subject, "[ALMA][Round ended]");
+        assert_eq!(subject, "[ALMA][Completed]");
         assert!(body.contains("Alma final reply"));
         assert!(!body.contains("Project:"), "empty cwd hides the Project field");
         assert!(!body.contains("outputTokens"));
@@ -369,7 +369,7 @@ mod pi_codex_tests {
         let v: Value = serde_json::from_str(&pi_payload()).unwrap();
         let (session, subject, body) = format_report("pi", &v).expect("pi agent_end report");
         assert_eq!(session, "/tmp/pi/sessions/demo.jsonl");
-        assert_eq!(subject, "[project][PI][Round ended]");
+        assert_eq!(subject, "[project][PI][Completed]");
         assert!(body.contains("Project: project"));
         assert!(body.contains("Pi finished the task."));
         // A wrong event type must be discarded, like every other adapter.
@@ -421,7 +421,7 @@ mod pi_codex_tests {
         drain(&root, &cfg, &db).unwrap();
         let pending = db.pending_outbox(false).unwrap();
         assert_eq!(pending.len(), 1, "identical settled payloads must dedup to one report");
-        assert_eq!(pending[0].subject, "[project][PI][Round ended]");
+        assert_eq!(pending[0].subject, "[project][PI][Completed]");
         assert!(pending[0].body.contains("Pi finished the task."));
         let s = db.stats().unwrap();
         assert_eq!(s.hook_reports, 1);
@@ -452,7 +452,7 @@ mod pi_codex_tests {
         let v: Value = serde_json::from_str(&codex_payload()).unwrap();
         let (session, subject, body) = format_report("codex", &v).expect("codex report");
         assert_eq!(session, "b5f6c1c2-1111-2222-3333-444455556666");
-        assert_eq!(subject, "[project][CODEX][Round ended]");
+        assert_eq!(subject, "[project][CODEX][Completed]");
         assert!(body.contains("Project: project"));
         assert!(body.contains("Rename complete and verified"));
         assert!(!body.contains("Rename foo to bar"), "input messages must not leak into the report");
@@ -494,7 +494,7 @@ mod pi_codex_tests {
         drain(&root, &cfg, &db).unwrap();
         let pending = db.pending_outbox(false).unwrap();
         assert_eq!(pending.len(), 1, "same turn-id and payload must dedup to one report");
-        assert_eq!(pending[0].subject, "[project][CODEX][Round ended]");
+        assert_eq!(pending[0].subject, "[project][CODEX][Completed]");
         let s = db.stats().unwrap();
         assert_eq!(s.hook_reports, 1);
         assert_eq!(s.hook_pending, 1);

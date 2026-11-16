@@ -274,7 +274,7 @@ impl Gateway {
         let summary = if success { text(&cfg.language,"本轮执行结束，请查看 Agent 回复。","This execution round has ended. Review the Agent response.") }
             else { text(&cfg.language,"本轮执行失败，请查看原因。","This execution round failed. Review the reason.") };
         let body = fmt::task_report(&cfg.language, &session, &job.id, summary,
-            if success { text(&cfg.language,"本轮结束","Round ended") } else { text(&cfg.language,"失败","Failed") },
+            if success { text(&cfg.language,"完成","Completed") } else { text(&cfg.language,"失败","Failed") },
             &[(text(&cfg.language,"结果 / 原因","Result / reason"), &fmt::excerpt(&report,fmt::RESULT_LIMIT,&cfg.language))],
             text(&cfg.language,"请检查结果；执行结束不代表所有目标均已完成。可直接回复继续此会话。","Review the result; execution ending does not confirm every goal is achieved. Reply to continue this session."));
         self.database.queue_reply(&job.session_id, &cfg.mail.address, &body, "result")?;
