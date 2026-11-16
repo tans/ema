@@ -87,9 +87,8 @@ pub fn extract(agent: &'static str, wire_event_type: &str, v: &Value) -> Normali
     if prompt.trim().is_empty() {
         prompt = content(&v["prompt"]);
     }
-    if agent == "codex" && prompt.trim().is_empty() {
-        prompt = content(&v["input-messages"]);
-    }
+    // codex's `input-messages` is the argv echo of the notify call, not the user's
+    // instruction — it must not leak into reports as the prompt. Leave it empty.
     let response = field(
         v,
         &["last-assistant-message", "last_assistant_message", "prompt_response", "response"],
@@ -144,7 +143,7 @@ pub fn extract(agent: &'static str, wire_event_type: &str, v: &Value) -> Normali
 #[cfg(test)]
 mod tests {
     #[test]
-    fn codex_native_notify_preserves_input_messages() {
+    fn codex_native_notify_does_not_leak_input_messages() {
         let raw = serde_json::json!({
             "type": "agent-turn-complete", "thread-id": "native-session", "turn-id": "native-turn",
             "cwd": "/tmp/mail-qa", "client": "exec",
@@ -152,7 +151,7 @@ mod tests {
             "last-assistant-message": "内容已核对"
         });
         let event = super::extract("codex", "agent-turn-complete", &raw);
-        assert_eq!(event.prompt, "核对邮件内容\n保留中文指令");
+        assert_eq!(event.prompt, "", "input-messages is the argv echo and must not leak");
         assert_eq!(event.response, "内容已核对");
         assert_eq!(event.session_id, "native-session");
     }
