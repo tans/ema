@@ -183,8 +183,7 @@ pub fn send(c:&MailSettings,pass:&str,o:&Outbound)->Result<()> {
     if !o.references.is_empty() { builder=builder.references(o.references.clone()); }
     // Self-identification headers: survive QQ Mail's Message-ID rewrite so our own
     // outbound mail coming back into the INBOX can be recognized and dropped as echo.
-    let msg = builder.body(crate::email_format::envelope(&o.kind,&o.message_id,&o.body))?;
-    let mut msg = msg;
+    let mut msg = builder.body(crate::email_format::envelope(&o.kind,&o.message_id,&o.body))?;
     msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Version"), "1".into()));
     if !o.kind.is_empty() {
         msg.headers_mut().insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("X-EMA-Kind"), o.kind.clone()));
