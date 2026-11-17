@@ -16,7 +16,7 @@ pub async fn is_available(executable: &str) -> bool {
 /// Execute the installed CLI directly; never send email content through a shell.
 pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Session) -> Result<String> {
     if session.agent == "alma" {
-        return crate::alma::execute(&config, &job, &session).await;
+        return crate::alma::execute(db, &config, &job, &session).await;
     }
     if session.agent != "codex" {
         return crate::cli::execute(db,&config,&job,&session).await;

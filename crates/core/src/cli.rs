@@ -66,18 +66,25 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         .with_context(||format!("{} CLI not found. Install it or configure a supported executable.",session.agent))?;
     let mut cmd=Command::new(&executable);
     if session.agent=="opencode" {
-        let id=session.agent_session.as_deref().context("the original session ID is missing")?;
-        let mut list=Command::new(&executable);
-        list.args(["session","list","--format","json","--pure","--max-count","10000"])
-            .current_dir(&path).stdin(Stdio::null()).kill_on_drop(true);
-        for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{list.env_remove(key);}
-        let listed=tokio::time::timeout(Duration::from_secs(15),list.output()).await??;
-        if !listed.status.success() {bail!("could not verify the original OpenCode session");}
-        let sessions:serde_json::Value=serde_json::from_slice(&listed.stdout).context("invalid OpenCode session list")?;
-        if !sessions.as_array().map(|items|items.iter().any(|item|item["id"].as_str()==Some(id))).unwrap_or(false) {
-            bail!("the original OpenCode session is unavailable");
+        // Fresh tasks (no native session yet) start a new OpenCode session;
+        // the JSON event stream carries the new session ID which we persist
+        // for later continuations.
+        if let Some(id)=session.agent_session.as_deref() {
+            let mut list=Command::new(&executable);
+            list.args(["session","list","--format","json","--pure","--max-count","10000"])
+                .current_dir(&path).stdin(Stdio::null()).kill_on_drop(true);
+            for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{list.env_remove(key);}
+            let listed=tokio::time::timeout(Duration::from_secs(15),list.output()).await??;
+            if !listed.status.success() {bail!("could not verify the original OpenCode session");}
+            let sessions:serde_json::Value=serde_json::from_slice(&listed.stdout).context("invalid OpenCode session list")?;
+            if !sessions.as_array().map(|items|items.iter().any(|item|item["id"].as_str()==Some(id))).unwrap_or(false) {
+                bail!("the original OpenCode session is unavailable");
+            }
+            cmd.args(["run","--pure","--format","json","--session",id,"--"]);
+        } else {
+            cmd.args(["run","--pure","--format","json","--"]);
         }
-        cmd.args(["run","--pure","--format","json","--session",id,"--"]).arg(&job.prompt)
+        cmd.arg(&job.prompt)
             .env("OPENCODE_PERMISSION",r#"{"*":"deny","read":{"*":"allow","*.env":"deny","*.env.*":"deny","*.env.example":"allow"},"glob":"allow","grep":"allow","list":"allow"}"#)
             .current_dir(&path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
@@ -88,6 +95,10 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Ok(event)=serde_json::from_str::<serde_json::Value>(line) {
                 if event["type"]=="error" {bail!("OpenCode reported a generation error");}
+                // Persist the freshly created session ID from the event stream.
+                if let Some(id)=event.get("sessionID").and_then(|v|v.as_str()) {
+                    if !id.trim().is_empty() { db.set_agent_session(&session.id, id)?; }
+                }
                 if event["type"]=="text" {
                     if let Some(text)=event["part"]["text"].as_str() {answer.push_str(text);}
                 }
