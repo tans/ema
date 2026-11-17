@@ -45,8 +45,10 @@ fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default
 
 fn private_dir(p: &Path) -> Result<()> {
     fs::create_dir_all(p)?;
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(p, fs::Permissions::from_mode(0o700))?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(p, fs::Permissions::from_mode(0o700))?;
+    }
     Ok(())
 }
 
@@ -89,6 +91,7 @@ pub fn install(root: &Path) -> Result<()> {
 
 /// The shared spool shim every hook funnels into. Refuses to take over a
 /// pre-existing non-EMA executable.
+#[cfg(unix)]
 pub(crate) fn install_shim(root: &Path) -> Result<PathBuf> {
     agent_hooks::shim::install(root, &agent_hooks::registry::agent_names())
 }

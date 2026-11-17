@@ -24,15 +24,15 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 
   rust:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --workspace
-      - name: Check hook adapters compile for Windows
-        run: |
-          rustup target add x86_64-pc-windows-gnu
-          cargo check -p agent-hooks --target x86_64-pc-windows-gnu --locked
+      - run: cargo check --workspace --locked
 
   macos-package:
     name: macOS DMG and verified signed updater
