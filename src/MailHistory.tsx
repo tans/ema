@@ -22,7 +22,7 @@ const copy = {
     title: "邮件", back: "返回列表", metadata: "邮件信息", description: "查看 EMA 轮询到的新邮件和发出的邮件。记录保存在本机。",
     search: "搜索主题、正文、邮箱或邮件 ID", refresh: "刷新", loading: "正在加载邮件记录…",
     empty: "还没有邮件记录", noMatches: "没有找到匹配的邮件", filteredEmpty: "当前过滤条件下没有邮件", filterHint: "打开工具栏的过滤按钮可调整显示的邮件类型。", emptyHelp: "启用收信后，新轮询到的邮件会保存在这里。",
-    select: "选择一封邮件查看详情", in: "收件", out: "发件", from: "发件人", to: "收件人", mailbox: "收件邮箱", cc: "抄送", references: "关联邮件 ID", originalDate: "邮件日期",
+    select: "选择一封邮件查看详情", in: "收件", out: "发件", reply: "回复", from: "发件人", to: "收件人", mailbox: "收件邮箱", cc: "抄送", references: "关联邮件 ID", originalDate: "邮件日期",
     recorded: "记录时间", sentAt: "SMTP 接受时间", attempts: "发送尝试", messageId: "邮件 ID",
     content: "邮件正文", lastError: "最近一次发送错误", noBody: "没有可显示的正文", unknown: "未知", noSubject: "（无主题）",
     previous: "上一页", next: "下一页", page: "第", pageEnd: "页", failed: "加载失败，请刷新重试。",
@@ -30,15 +30,6 @@ const copy = {
       echo: "回环", unrelated: "无关", new_task: "新任务", resume_task: "继续任务", invalid: "已拒绝",
       new_task_ack: "新任务回执", resume_ack: "继续回执", progress: "进度", result: "结果", error: "错误", hook: "Hook", test: "测试"
     }, legacyKind: "历史邮件",
-    statuses: {
-      echo: "回环已过滤", missing_session: "无法续接：缺少会话", processing: "处理中", retry: "处理失败，等待重试", automated: "自动或自身邮件", unauthorized: "未进入任务：发件人未授权",
-      empty: "未进入任务：无纯文本正文", access_denied: "未进入任务：访问码无效", owner_mismatch: "未进入任务：会话发件人不符",
-      ordinary: "普通邮件", unsupported: "无法执行：Agent 不支持", not_installed: "无法执行：Agent 未安装",
-      unavailable_runner: "无法执行：Agent 不可用", awaiting_directory: "等待确认目录", duplicate: "重复邮件",
-      queued_in: "任务已排队", queued_out: "等待发送", sent: "SMTP 已接受", failed: "发送失败",
-      sending: "正在发送", unknown: "发送状态未知", legacy: "旧记录：信息不完整", malformed: "邮件无法解析",
-      too_large_for_task: "未进入任务：邮件超过处理大小", unavailable: "邮件已不可获取"
-    },
     notes: {
       local_reply: "从 EMA 内提交的会话指令；回执和结果通过邮件返回。",
       html: "此邮件仅有 HTML 正文，下方显示源文本。", truncated: "正文超过 20 万字符，已截断。",
@@ -51,7 +42,7 @@ const copy = {
     title: "Mail", back: "Back to list", metadata: "Message information", description: "Review new mail polled and sent by EMA. Records stay on this device.",
     search: "Search subject, body, address or message ID", refresh: "Refresh", loading: "Loading mail history…",
     empty: "No mail records yet", noMatches: "No matching mail", filteredEmpty: "No mail under the current filters", filterHint: "Use the filter button in the toolbar to adjust which mail types are shown.", emptyHelp: "Newly polled mail appears here after receiving is enabled.",
-    select: "Select a message to see its details", in: "Received", out: "Sent", from: "From", to: "To", mailbox: "Mailbox", cc: "Cc", references: "Related message IDs", originalDate: "Message date",
+    select: "Select a message to see its details", in: "Received", out: "Sent", reply: "Reply", from: "From", to: "To", mailbox: "Mailbox", cc: "Cc", references: "Related message IDs", originalDate: "Message date",
     recorded: "Recorded", sentAt: "Accepted by SMTP", attempts: "Send attempts", messageId: "Message ID",
     content: "Message body", lastError: "Most recent send error", noBody: "No body available", unknown: "Unknown", noSubject: "(No subject)",
     previous: "Previous", next: "Next", page: "Page", pageEnd: "", failed: "Could not load history. Refresh to retry.",
@@ -59,15 +50,6 @@ const copy = {
       echo: "Echo", unrelated: "Unrelated", new_task: "New task", resume_task: "Resume", invalid: "Rejected",
       new_task_ack: "Task ack", resume_ack: "Resume ack", progress: "Progress", result: "Result", error: "Error", hook: "Hook", test: "Test"
     }, legacyKind: "Legacy",
-    statuses: {
-      echo: "Echo filtered", missing_session: "Cannot resume: no session", processing: "Processing", retry: "Processing failed; retrying", automated: "Automated or own mail", unauthorized: "Not a task: sender not allowed",
-      empty: "Not a task: no plain-text body", access_denied: "Not a task: invalid access code", owner_mismatch: "Not a task: session owner mismatch",
-      ordinary: "Ordinary mail", unsupported: "Cannot run: Agent unsupported", not_installed: "Cannot run: Agent not installed",
-      unavailable_runner: "Cannot run: Agent unavailable", awaiting_directory: "Waiting for directory", duplicate: "Duplicate mail",
-      queued_in: "Task queued", queued_out: "Waiting to send", sent: "Accepted by SMTP", failed: "Send failed",
-      sending: "Sending", unknown: "Send status unknown", legacy: "Older record: incomplete", malformed: "Unable to parse",
-      too_large_for_task: "Not a task: message too large", unavailable: "Message no longer available"
-    },
     notes: {
       local_reply: "Conversation instruction submitted in EMA. Acknowledgment and results arrive by email.",
       html: "This message only has HTML; its source is shown below.", truncated: "The body exceeded 200,000 characters and was truncated.",
@@ -110,10 +92,6 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
   const filteredRows = rows.filter(mail => !hiddenKinds[mail.kind]);
   const selectedMail = filteredRows.slice(0, 50).find(item => item.id === selected);
   const date = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language) : t.unknown;
-  const status = (mail: MailRecord) => {
-    const key = mail.status === "queued" ? `queued_${mail.direction}` : mail.status;
-    return t.statuses[key as keyof typeof t.statuses] ?? mail.status;
-  };
   const shortDate = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language, {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
   }) : t.unknown;
@@ -138,13 +116,12 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
             className={"history-row " + (mail.id === selected ? "selected" : "")}
             aria-pressed={mail.id === selected} onClick={() => setSelected(mail.id)}>
             <span className="history-row-top"><strong>{mail.subject || t.noSubject}</strong>{badge(mail)}<time title={date(mail.created_at)}>{shortDate(mail.created_at)}</time></span>
-            <span className="history-row-bottom"><span className="history-address">{mail.sender || t.unknown}</span>
-              <span className="history-status" title={status(mail)}>{status(mail)}</span></span>
+            <span className="history-row-bottom"><span className="history-address">{mail.sender || t.unknown}</span></span>
           </button>)}
         </div>
         {selectedMail && <article className="history-detail" aria-live="polite">
             <button type="button" className="btn btn-ghost detail-back" onClick={() => setSelected(null)}><ArrowLeft size={16}/>{t.back}</button>
-            <div className="history-detail-top">{badge(selectedMail)}<span>{selectedMail.direction === "in" ? t.in : t.out}</span><span>{status(selectedMail)}</span></div>
+            <div className="history-detail-top">{badge(selectedMail)}<span>{selectedMail.direction === "in" ? t.in : t.out}</span><span>{t.reply}</span></div>
             <h2>{selectedMail.subject || t.noSubject}</h2>
             <AgentReply recordId={selectedMail.id} language={language} version={version + replyVersion} onSubmitted={() => setReplyVersion(value => value + 1)}/>
             <details className="message-metadata"><summary>{t.metadata}</summary><dl>
