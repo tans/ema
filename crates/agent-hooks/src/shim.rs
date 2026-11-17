@@ -6,7 +6,9 @@
 //! is active (20-second window around the last `tick`).
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use crate::util::{owned_executable, shell_quote};
+#[cfg(unix)]
+use crate::util::owned_executable;
+use crate::util::shell_quote;
 
 /// Build the shim source for the given (ordered) agent dispatch list.
 pub fn template(active: &Path, spool: &Path, agents: &[&str]) -> String {

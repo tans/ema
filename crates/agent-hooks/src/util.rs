@@ -88,7 +88,6 @@ pub fn surgical_write(p: &Path, plan: &dyn Fn(&[u8]) -> Result<Option<Vec<u8>>>)
     anyhow::bail!("write to {} kept conflicting with external edits", p.display())
 }
 
-#[cfg(unix)]
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -96,7 +95,6 @@ pub fn shell_quote(s: &str) -> String {
 /// Write a fully EMA-owned, non-executable file (plugins, extensions).
 /// No-ops when identical; never overwrites a file that lacks the EMA marker.
 /// Returns true when the file was (re)written.
-#[cfg(unix)]
 pub fn owned_file(path: &Path, content: &str) -> Result<bool> {
     let wrote = std::cell::Cell::new(false);
     surgical_write(path, &|current| {
@@ -134,7 +132,6 @@ pub fn is_managed_file(path: &Path) -> bool {
 /// layouts: { "hooks": { "<event>": [ { "hooks": [ {..} ] } ] } }.
 /// Idempotent on the `ema-report` hook name; preserves everything else and
 /// refuses to touch unreadable/invalid JSON. Returns true when written.
-#[cfg(unix)]
 pub fn json_hook(file: &Path, event: &str, hook: &Value) -> Result<bool> {
     let wrote = std::cell::Cell::new(false);
     surgical_write(file, &|current| {
