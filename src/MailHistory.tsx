@@ -8,6 +8,7 @@ import "daisyui/components/input.css";
 import "daisyui/components/badge.css";
 import "./mail-history.css";
 import AgentReply from "./AgentReply";
+import ReactMarkdown from "react-markdown";
 
 type MailRecord = {
   id: string; message_id: string; direction: "in" | "out";
@@ -104,6 +105,10 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
     return <span className={`badge badge-sm mail-kind mail-kind-${tone}`} title={mail.kind || t.legacyKind}>{label}</span>;
   };
   const note = (key: string) => t.notes[key as keyof typeof t.notes] ?? "";
+  // HTML-only messages stay as raw source; everything else renders as Markdown.
+  const isHtmlBody = (mail: MailRecord) =>
+    mail.archive_note === "html" || mail.archive_note === "html_truncated"
+    || /<[a-z][^>]*>/i.test(mail.body);
 
   return <section className="history-page" aria-label={t.title}>
     {loading && rows.length === 0 && <p className="history-message" role="status">{t.loading}</p>}
@@ -138,7 +143,9 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
             </dl></details>
             {selectedMail.direction === "out" && selectedMail.detail && <p className="history-error"><strong>{t.lastError}: </strong>{selectedMail.detail}</p>}
             {note(selectedMail.archive_note) && <p className="history-note">{note(selectedMail.archive_note)}</p>}
-            <pre>{selectedMail.body || t.noBody}</pre>
+            {isHtmlBody(selectedMail) || !selectedMail.body
+              ? <pre>{selectedMail.body || t.noBody}</pre>
+              : <div className="history-markdown"><ReactMarkdown>{selectedMail.body}</ReactMarkdown></div>}
         </article>}
       </div>
       <div className="history-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={page === 0} onClick={() => setPage(page - 1)}>{t.previous}</button>
