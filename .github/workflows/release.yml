@@ -75,11 +75,11 @@ jobs:
           patch = int(package.split(".")[2])
           scope = "patch" if patch > 0 else "full"
           matrix = [
-              {"name": "macOS ARM64", "platform": "macos-15", "target": "aarch64-apple-darwin", "args": "--target aarch64-apple-darwin --bundles dmg"}
+              {"name": "macOS ARM64", "platform": "macos-15", "target": "aarch64-apple-darwin", "args": "--target aarch64-apple-darwin --bundles app,dmg"}
           ]
           if scope == "full":
               matrix += [
-                  {"name": "macOS Intel", "platform": "macos-15-intel", "target": "x86_64-apple-darwin", "args": "--target x86_64-apple-darwin --bundles dmg"},
+                  {"name": "macOS Intel", "platform": "macos-15-intel", "target": "x86_64-apple-darwin", "args": "--target x86_64-apple-darwin --bundles app,dmg"},
                   {"name": "Linux x64", "platform": "ubuntu-22.04", "target": "", "args": "--bundles deb,appimage"},
                   {"name": "Windows x64", "platform": "windows-latest", "target": "", "args": "--bundles nsis,msi"},
               ]
