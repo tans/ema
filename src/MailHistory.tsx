@@ -91,7 +91,9 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
   }, [search, page, version, replyVersion]);
 
   const filteredRows = rows.filter(mail => !hiddenKinds[mail.kind]);
+  const displayBody = (body: string) => body.replace(/^EMA-Message:[^\r\n]*(?:\r?\n)+\s*/i, "");
   const selectedMail = filteredRows.slice(0, 50).find(item => item.id === selected);
+  const selectedBody = selectedMail ? displayBody(selectedMail.body) : "";
   const date = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language) : t.unknown;
   const shortDate = (value: number | null) => value ? new Date(value * 1000).toLocaleString(language, {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
@@ -106,9 +108,9 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
   };
   const note = (key: string) => t.notes[key as keyof typeof t.notes] ?? "";
   // HTML-only messages stay as raw source; everything else renders as Markdown.
-  const isHtmlBody = (mail: MailRecord) =>
+  const isHtmlBody = (mail: MailRecord, body: string) =>
     mail.archive_note === "html" || mail.archive_note === "html_truncated"
-    || /<[a-z][^>]*>/i.test(mail.body);
+    || /<[a-z][^>]*>/i.test(body);
 
   return <section className="history-page" aria-label={t.title}>
     {loading && rows.length === 0 && <p className="history-message" role="status">{t.loading}</p>}
@@ -143,9 +145,9 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
             </dl></details>
             {selectedMail.direction === "out" && selectedMail.detail && <p className="history-error"><strong>{t.lastError}: </strong>{selectedMail.detail}</p>}
             {note(selectedMail.archive_note) && <p className="history-note">{note(selectedMail.archive_note)}</p>}
-            {isHtmlBody(selectedMail) || !selectedMail.body
+            {isHtmlBody(selectedMail, selectedMail.body) || !selectedMail.body
               ? <pre>{selectedMail.body || t.noBody}</pre>
-              : <div className="history-markdown"><ReactMarkdown>{selectedMail.body}</ReactMarkdown></div>}
+              : <div className="history-markdown"><ReactMarkdown>{selectedBody}</ReactMarkdown></div>}
         </article>}
       </div>
       <div className="history-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={page === 0} onClick={() => setPage(page - 1)}>{t.previous}</button>

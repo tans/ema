@@ -58,8 +58,7 @@
 .history-detail .reply-context > div { grid-template-columns: 90px minmax(0, 1fr); gap: 8px; }
 .reply-context dt { display: flex; align-items: center; gap: 4px; }
 .reply-context dd { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.reply-directory, .reply-session { color: var(--color-base-content); font-weight: 550; }
-.reply-ema-session { color: var(--ema-muted); }
+.reply-directory { color: var(--color-base-content); font-weight: 550; }
 .reply-compose { display: grid; gap: 7px; margin-top: 14px; }
 .reply-compose label { font-size: 12px; font-weight: 550; }
 .app .reply-compose .textarea { width: 100%; min-height: 110px; padding: 10px; resize: vertical; border: 0; box-shadow: none; background: var(--color-base-100); color: var(--color-base-content); font: inherit; font-size: 12px; line-height: 1.6; }

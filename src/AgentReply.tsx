@@ -71,8 +71,6 @@ export default function AgentReply({ recordId, language, version, onSubmitted }:
       {!open && <button type="button" className="btn btn-ghost btn-sm" disabled={!!blocked || busyId !== null} onClick={() => setOpen(true)}><CornerUpLeft size={14}/>{t.reply}</button>}</div>
     <dl className="reply-context">
       <div><dt><Folder size={13}/>{t.directory}</dt><dd className="reply-directory">{context.cwd || t.unknownDirectory}</dd></div>
-      <div><dt>{t.session}</dt><dd className="reply-session">{context.native_session}</dd></div>
-      {context.session_id && <div className="reply-ema-session"><dt>{t.ema}</dt><dd>{context.session_id}</dd></div>}
     </dl>
     {blocked && <p className="reply-hint" role="status">{blocked}</p>}
     {open && <form className="reply-compose" onSubmit={event => { event.preventDefault(); void submit(); }}>
