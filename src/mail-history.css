@@ -19,8 +19,7 @@
 .app .detail-back { padding-left: 0; color: var(--ema-muted); margin-bottom: 10px; }
 .history-detail-top { display: flex; justify-content: space-between; gap: 12px; color: var(--ema-muted); font-size: 11px; }
 .history-detail h2 { margin: 8px 0 12px; font-size: 16px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
-.message-metadata { margin-bottom: 10px; }
-.message-metadata summary { color: var(--ema-muted); padding: 4px 0; font-size: 12px; }
+.message-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 14px; color: var(--ema-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .history-detail dl { display: grid; gap: 8px; margin: 16px 0 0; font-size: 12px; }
 .history-detail dl div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
 .history-detail dt { color: var(--ema-muted); }

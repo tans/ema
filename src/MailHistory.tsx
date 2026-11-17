@@ -128,21 +128,16 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
         </div>
         {selectedMail && <article className="history-detail" aria-live="polite">
             <button type="button" className="btn btn-ghost detail-back" onClick={() => setSelected(null)}><ArrowLeft size={16}/>{t.back}</button>
-            <div className="history-detail-top">{badge(selectedMail)}<span>{selectedMail.direction === "in" ? t.in : t.out}</span><span>{t.reply}</span></div>
+            <div className="history-detail-top">{badge(selectedMail)}
+              <time>{selectedMail.original_date || date(selectedMail.created_at)}</time></div>
             <h2>{selectedMail.subject || t.noSubject}</h2>
             <AgentReply recordId={selectedMail.id} language={language} version={version + replyVersion} onSubmitted={() => setReplyVersion(value => value + 1)}/>
-            <details className="message-metadata"><summary>{t.metadata}</summary><dl>
-              <div><dt>{t.from}</dt><dd>{selectedMail.sender || t.unknown}</dd></div>
-              <div><dt>{t.to}</dt><dd>{selectedMail.recipient || t.unknown}</dd></div>
-              {selectedMail.mailbox && <div><dt>{t.mailbox}</dt><dd>{selectedMail.mailbox}</dd></div>}
-              {selectedMail.cc && <div><dt>{t.cc}</dt><dd>{selectedMail.cc}</dd></div>}
-              {selectedMail.original_date && <div><dt>{t.originalDate}</dt><dd>{selectedMail.original_date}</dd></div>}
-              <div><dt>{t.recorded}</dt><dd>{date(selectedMail.created_at)}</dd></div>
-              {selectedMail.sent_at && <div><dt>{t.sentAt}</dt><dd>{date(selectedMail.sent_at)}</dd></div>}
-              {selectedMail.direction === "out" && <div><dt>{t.attempts}</dt><dd>{selectedMail.attempts ?? t.unknown}</dd></div>}
-              {selectedMail.message_id && <div><dt>{t.messageId}</dt><dd>{selectedMail.message_id}</dd></div>}
-              {selectedMail.references && <div><dt>{t.references}</dt><dd>{selectedMail.references}</dd></div>}
-            </dl></details>
+            <div className="message-meta">
+              <span>{t.from}: {selectedMail.sender || t.unknown}</span>
+              <span>{t.to}: {selectedMail.recipient || t.unknown}</span>
+              {selectedMail.cc && <span>{t.cc}: {selectedMail.cc}</span>}
+              {selectedMail.mailbox && <span>{t.mailbox}: {selectedMail.mailbox}</span>}
+            </div>
             {selectedMail.direction === "out" && selectedMail.detail && <p className="history-error"><strong>{t.lastError}: </strong>{selectedMail.detail}</p>}
             {note(selectedMail.archive_note) && <p className="history-note">{note(selectedMail.archive_note)}</p>}
             {isHtmlBody(selectedMail, selectedMail.body) || !selectedMail.body
