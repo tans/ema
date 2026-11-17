@@ -177,3 +177,16 @@ pub fn route_error(
         &[(text(language, "Agent 会话 ID", "Agent session ID"), session)],
     )
 }
+
+/// Structured subject tag for EMA's own replies: [folder][AGENT][status].
+/// Threading is carried by In-Reply-To/References, so dropping the "Re:"
+/// prefix is safe; the tag makes the list view self-describing.
+pub fn tagged_subject(folder: &str, agent: &str, status: &str) -> String {
+    let folder = single_line(folder, 40);
+    let prefix = if folder.is_empty() {
+        format!("[{}][{}]", agent.to_ascii_uppercase(), status)
+    } else {
+        format!("[{folder}][{}][{status}]", agent.to_ascii_uppercase())
+    };
+    single_line(&prefix, 100)
+}

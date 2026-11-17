@@ -72,6 +72,7 @@ pub struct Settings {
     pub agent_routes: Vec<AgentRoute>,
     pub projects: Vec<Project>,
     pub codex_command: String,
+    /// Legacy setting retained for config round trips; Agent permissions are native.
     pub workspace_write: bool,
     pub poll_seconds: u64,
     pub progress_minutes: Vec<u64>,
@@ -143,9 +144,6 @@ impl Settings {
                 bail!("configure mail account before enabling gateway");
             }
             if self.allowlist.is_empty() { bail!("at least one approved sender is required"); }
-            if self.workspace_write && self.projects.is_empty() {
-                bail!("workspace-write requires an explicitly authorized legacy project; memory never grants write access");
-            }
         }
         Ok(())
     }

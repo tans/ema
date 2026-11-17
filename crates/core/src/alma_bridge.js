@@ -24,7 +24,7 @@
       if (error) reject(error); else resolve(answer);
     }
     ws.addEventListener('open', () => ws.send(JSON.stringify({
-      type: 'generate_response', data: { threadId, model: thread.model, noTools: true, source: 'ema',
+      type: 'generate_response', data: { threadId, model: thread.model, source: 'ema',
         userMessage: { role: 'user', parts: [{ type: 'text', text: prompt }] } },
     })));
     ws.addEventListener('error', () => finish(new Error('Could not connect to Alma')));

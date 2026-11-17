@@ -56,9 +56,6 @@ pub fn resolve(agent:&str,config:&Settings)->Option<PathBuf> {
 }
 
 pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->Result<String> {
-    if cfg.workspace_write {
-        bail!("{} currently supports read-only email execution only",session.agent);
-    }
     let cwd=session.cwd.as_deref().context("session working directory is missing")?;
     let path=Path::new(cwd).canonicalize()?;
     if !path.is_dir() {bail!("working directory is unavailable");}
@@ -71,7 +68,7 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         // for later continuations.
         if let Some(id)=session.agent_session.as_deref() {
             let mut list=Command::new(&executable);
-            list.args(["session","list","--format","json","--pure","--max-count","10000"])
+            list.args(["session","list","--format","json","--max-count","10000"])
                 .current_dir(&path).stdin(Stdio::null()).kill_on_drop(true);
             for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{list.env_remove(key);}
             let listed=tokio::time::timeout(Duration::from_secs(15),list.output()).await??;
@@ -80,21 +77,22 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
             if !sessions.as_array().map(|items|items.iter().any(|item|item["id"].as_str()==Some(id))).unwrap_or(false) {
                 bail!("the original OpenCode session is unavailable");
             }
-            cmd.args(["run","--pure","--format","json","--session",id,"--"]);
+            cmd.args(["run","--format","json","--session",id,"--"]);
         } else {
-            cmd.args(["run","--pure","--format","json","--"]);
+            cmd.args(["run","--format","json","--"]);
         }
         cmd.arg(&job.prompt)
-            .env("OPENCODE_PERMISSION",r#"{"*":"deny","read":{"*":"allow","*.env":"deny","*.env.*":"deny","*.env.example":"allow"},"glob":"allow","grep":"allow","list":"allow"}"#)
             .current_dir(&path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
         let output=tokio::time::timeout(Duration::from_secs(900),cmd.output()).await
             .context("Agent exceeded 15-minute execution timeout")??;
-        if !output.status.success() {bail!("OpenCode failed: {}",String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
+        if !output.status.success() {bail!("OpenCode failed: {}",failure_detail(&output));}
         let mut answer=String::new();
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Ok(event)=serde_json::from_str::<serde_json::Value>(line) {
-                if event["type"]=="error" {bail!("OpenCode reported a generation error");}
+                if event["type"]=="error" {
+                    bail!("OpenCode reported a generation error: {}", crate::email_format::excerpt(&event.to_string(), 1000, &cfg.language));
+                }
                 // Persist the freshly created session ID from the event stream.
                 if let Some(id)=event.get("sessionID").and_then(|v|v.as_str()) {
                     if !id.trim().is_empty() { db.set_agent_session(&session.id, id)?; }
@@ -121,20 +119,20 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
                 let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
                 if !session_path.is_file() {bail!("the original session file is unavailable");}
                 cmd.args(["-p","--session"]).arg(session_path)
-                    .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+                    .arg("--");
             } else {
                 cmd.arg("-p").arg("--session-dir").arg(fresh_dir.as_ref().unwrap())
-                    .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+                    .arg("--");
             }
         } else {
             if let Some(id)=session.agent_session.as_deref() {
                 let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
                 if !session_path.is_file() {bail!("the original session file is unavailable");}
                 cmd.arg("-p").arg("--resume").arg(session_path)
-                    .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+                    .arg("--");
             } else {
                 cmd.arg("-p").arg("--session-dir").arg(fresh_dir.as_ref().unwrap())
-                    .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+                    .arg("--");
             }
         }
         cmd.arg(&job.prompt).current_dir(&path)
@@ -148,24 +146,59 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
                 db.set_agent_session(&session.id, &latest)?;
             }
         }
-        if !output.status.success() {bail!("{} failed: {}",session.agent,String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
+        if !output.status.success() {bail!("{} failed: {}",session.agent,failure_detail(&output));}
         let answer=crate::email_format::excerpt(&String::from_utf8_lossy(&output.stdout), crate::email_format::RESULT_LIMIT, &cfg.language);
         if answer.trim().is_empty() {bail!("Agent completed without a final response");}
+        return Ok(answer);
+    }
+    if session.agent=="hermes" {
+        // Non-interactive one-shot via the Hermes CLI. The stream-json format
+        // ends with a machine-readable result event carrying the session ID
+        // (persisted so a later email reply can resume the same conversation).
+        cmd.arg("chat").arg("-q").arg(&job.prompt)
+            .arg("--oneshot").arg("--format").arg("stream-json")
+            .arg("--source").arg("tool");
+        if let Some(id)=session.agent_session.as_deref(){cmd.arg("--resume").arg(id);}
+        cmd.current_dir(&path).stdin(Stdio::null()).stdout(Stdio::piped())
+            .stderr(Stdio::piped()).kill_on_drop(true);
+        for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
+        let output=tokio::time::timeout(Duration::from_secs(3600),cmd.output()).await
+            .context("Hermes exceeded 1-hour execution timeout")??;
+        let mut result=Option::<serde_json::Value>::None;
+        let mut sid=String::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Ok(event)=serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(id)=event.get("session_id").and_then(|v|v.as_str()) {
+                    if !id.trim().is_empty() {sid=id.to_string();}
+                }
+                if event["type"]=="result" {result=Some(event);}
+            }
+        }
+        let result=result.context("Hermes did not return a result event")?;
+        if !sid.is_empty() {db.set_agent_session(&session.id,&sid)?;}
+        let failed=(!output.status.success())
+            || result.get("error").map(|v|!v.is_null()).unwrap_or(false)
+            || result.get("exit_code").and_then(|v|v.as_i64()).is_some_and(|c|c!=0);
+        if failed {
+            let reason=result.get("error").filter(|v|!v.is_null()).map(|v|v.to_string())
+                .unwrap_or_else(||failure_detail(&output));
+            bail!("Hermes failed: {}", crate::email_format::excerpt(&reason, 1000, &cfg.language));
+        }
+        let answer=crate::email_format::excerpt(
+            result.get("text").and_then(|v|v.as_str()).unwrap_or(""),
+            crate::email_format::RESULT_LIMIT, &cfg.language);
+        if answer.trim().is_empty() {bail!("Hermes completed without a final response");}
         return Ok(answer);
     }
     match session.agent.as_str() {
         "cc"=>{
             cmd.arg("-p").arg(&job.prompt)
-               .arg("--output-format").arg("json")
-               .arg("--permission-mode").arg("plan")
-               .arg("--max-turns").arg("20");
+               .arg("--output-format").arg("json");
             if let Some(id)=session.agent_session.as_deref(){cmd.arg("--resume").arg(id);}
         }
         "gemini"=>{
             cmd.arg("-p").arg(&job.prompt)
-                .arg("--output-format").arg("json")
-                // Always constrain local filesystem access, including headless mode.
-                .arg("--sandbox").arg("--approval-mode").arg("plan");
+                .arg("--output-format").arg("json");
             if let Some(id)=session.agent_session.as_deref(){cmd.arg("--resume").arg(id);}
         }
         other=>bail!("no execution adapter for {other}: the CLI was found, but EMA has not implemented a non-interactive launch for this Agent"),
@@ -177,16 +210,16 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         .context("Agent exceeded 15-minute execution timeout")?
         .context("failed to launch Agent CLI")?;
     if !output.status.success() {
-        let error=String::from_utf8_lossy(&output.stderr);
-        bail!("{} exited {}: {}",session.agent,output.status,
-            error.chars().take(800).collect::<String>());
+        bail!("{} exited {}: {}",session.agent,output.status,failure_detail(&output));
     }
     if output.stdout.len()>256*1024 {bail!("Agent returned an oversized JSON response");}
     let data:serde_json::Value=serde_json::from_slice(&output.stdout)
         .context("Agent did not return a valid JSON result")?;
     if data.get("is_error").and_then(|v|v.as_bool())==Some(true) || data.get("error")
             .map(|v|!v.is_null()).unwrap_or(false) {
-        bail!("Agent reported an unsuccessful result");
+        let reason = data.get("error").filter(|v|!v.is_null())
+            .or_else(||data.get("result")).or_else(||data.get("errors")).unwrap_or(&data);
+        bail!("Agent reported an unsuccessful result: {}", crate::email_format::excerpt(&reason.to_string(), 1000, &cfg.language));
     }
     let answer=crate::email_format::excerpt(match session.agent.as_str(){
         "cc"=>data.get("result").and_then(|v|v.as_str()),
@@ -198,6 +231,13 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
     }
     if answer.trim().is_empty() {bail!("Agent completed without a final response");}
     Ok(answer)
+}
+
+// Some headless CLIs put a JSON authorization error on stdout and leave stderr empty.
+fn failure_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let reason = if stderr.trim().is_empty() { String::from_utf8_lossy(&output.stdout) } else { stderr };
+    reason.chars().take(1000).collect()
 }
 
 /// Newest `.jsonl` session file inside `dir` (created most recently), if any.

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/updater.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "tauri": "tauri",
     "icons": "tauri icon public/ema-app-icon.svg && tauri icon public/ema-logo.svg --png 32 --output src-tauri/icons/tray"
   },
@@ -16,7 +16,9 @@
     "@tauri-apps/plugin-updater": "^2.14.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-feather": "^2.0.10"
+    "react-feather": "^2.0.10",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",

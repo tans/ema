@@ -107,6 +107,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .header-search { display: flex; align-items: center; position: relative; flex: 1; min-width: 0; }
 .header-search > svg { position: absolute; left: 9px; pointer-events: none; color: var(--ema-muted); }
-.app .header-search .input { min-height: 28px; height: 28px; padding: 4px 64px 4px 30px; font-size: 12px; }
-.app .refresh-button { position: absolute; right: 2px; top: 0; color: var(--ema-muted); }
+.app .header-search .input { min-height: 28px; height: 28px; padding: 4px 10px 4px 30px; font-size: 12px; }
+.app .refresh-button { flex-shrink: 0; color: var(--ema-muted); }
 .app .settings-button { flex-shrink: 0; }

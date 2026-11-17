@@ -1,5 +1,5 @@
 //! Local replies target stored native conversations; arbitrary mail is never sent.
-use crate::{Gateway, config, cli, db::MailRecord, mail::Incoming};
+use crate::{Gateway, cli, db::MailRecord, mail::Incoming};
 use anyhow::{ensure, Context, Result};
 use serde::Serialize;
 
@@ -56,9 +56,8 @@ impl Gateway {
             self.database.local_reply_result(&mid,"duplicate","")?;
             return Ok("duplicate".into());
         }
-        let input=if cfg.workspace_write {format!("EMA-Code: {}\n{body}",config::secret("access")?)} else {body.to_string()};
         let incoming=Incoming {uid:0,message_id:mid.clone(),sender:owner,subject:record.subject,
-            body:input,references:vec![record.message_id],automated:false,ema_kind:None,ema_message_id:None};
+            body:body.to_string(),references:vec![record.message_id],automated:false,ema_kind:None,ema_message_id:None};
         match self.on_message(&cfg,incoming).await {
             Ok(status)=>{
                 self.database.local_reply_result(&mid,status,"")?;

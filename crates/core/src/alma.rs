@@ -48,7 +48,6 @@ fn runtime() -> Option<PathBuf> {
 }
 
 pub async fn execute(db: Arc<Database>, cfg:&Settings, job:&Job, session:&Session) -> Result<String> {
-    if cfg.workspace_write { bail!("Alma email continuation currently supports tool-free mode only"); }
     let id = match session.agent_session.as_deref() {
         Some(id) if !id.is_empty() => id.to_string(),
         _ => {

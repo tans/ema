@@ -18,7 +18,8 @@ type Settings = {
   language: string; mail: MailSettings;
   router: { base_url: string; model: string }; agent_routes: AgentRoute[];
   allowlist: string[]; projects: { alias: string; path: string }[];
-  codex_command: string; workspace_write: boolean;
+  codex_command: string;
+  workspace_write: boolean; // Legacy config only; Agent permissions use native settings.
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean; onboarding_completed: boolean;
 };
@@ -205,12 +206,12 @@ export default function App() {
       </button> : <div className="brand"><img src="/ema-logo.svg" alt=""/>EMA</div>}
       {view === "history" && mailboxReady && <label className="header-search"><Search size={14} aria-hidden="true"/>
         <input className="input input-ghost" type="search" aria-label={t.search} placeholder={t.search} value={search} onChange={e => setSearch(e.target.value)}/>
-        <button type="button" className="btn btn-ghost btn-square refresh-button" aria-label={receiving ? (language === "zh-CN" ? "正在收件…" : "Receiving…") : t.refresh} title={t.refresh} disabled={receiving} aria-busy={receiving} onClick={receiveMail}><RefreshCw size={14} aria-hidden="true"/></button>
       </label>}
       {view === "settings" ? <select className="language" aria-label={t.language} value={language} disabled={busy}
         onChange={e => patch({ language: e.target.value })}><option value="zh-CN">中文</option><option value="en">English</option></select>
         : <div className="header-actions">
           {mailboxReady && <>
+            <button type="button" className="btn btn-ghost btn-square refresh-button" aria-label={receiving ? (language === "zh-CN" ? "正在收件…" : "Receiving…") : t.refresh} title={t.refresh} disabled={receiving} aria-busy={receiving} onClick={receiveMail}><RefreshCw size={15} aria-hidden="true"/></button>
             <div className="filter-wrap">
               <button type="button" className={"btn btn-ghost btn-square filter-button" + (anyHidden ? " filter-active" : "")}
                 aria-label={t.filter} title={t.filter} aria-expanded={filterOpen}

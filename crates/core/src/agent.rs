@@ -21,9 +21,6 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     if session.agent != "codex" {
         return crate::cli::execute(db,&config,&job,&session).await;
     }
-    if config.workspace_write && session.project == "_agent_memory" {
-        anyhow::bail!("write access requires an explicitly authorized project");
-    }
     let cwd = if let Some(path)=session.cwd.as_ref() {
         let path=std::path::PathBuf::from(path).canonicalize()?;
         if !path.is_dir() { anyhow::bail!("session directory is no longer available"); }
@@ -31,10 +28,9 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
     } else { config.project(&session.project)? };
     let executable=crate::cli::resolve("codex",&config).context("Codex CLI command is unavailable")?;
     let mut cmd = Command::new(executable);
-    cmd.arg("exec").arg("--json").arg("-C").arg(&cwd)
-        .arg("--sandbox").arg(if config.workspace_write { "workspace-write" } else { "read-only" });
+    cmd.arg("exec").arg("--json").arg("-C").arg(&cwd);
     // Mail-only sessions use an isolated directory rather than a Git checkout.
-    // This skips repository detection while retaining the configured sandbox.
+    // Agent permissions come from its native defaults/configuration or resumed session.
     if session.project == "_agent_memory" { cmd.arg("--skip-git-repo-check"); }
     if let Some(existing) = &session.agent_session {
         cmd.arg("resume").arg(existing);
@@ -58,6 +54,7 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
         String::from_utf8_lossy(&bytes).to_string()
     });
     let mut final_text = String::new();
+    let mut turn_error = None;
     let mut last_event = Instant::now();
     let started = Instant::now();
     let mut reminders = config.progress_minutes.clone();
@@ -90,7 +87,9 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
                                         item.get("type").and_then(|v|v.as_str()).unwrap_or("item"))?;
                                 }
                             }
-                            if kind == "turn.failed" {
+                            if kind == "turn.failed" || kind == "error" {
+                                let reason = value.get("error").or_else(|| value.get("message")).unwrap_or(&value);
+                                turn_error = Some(fmt::excerpt(&reason.to_string(), 1000, &config.language));
                                 db.event(&job.id, kind, "Codex turn failed")?;
                             }
                         }
@@ -117,13 +116,14 @@ pub async fn execute(db: Arc<Database>, config: Settings, job: Job, session: Ses
                     let text = fmt::task_report(&config.language,&current,&job.id,&summary,text(&config.language,"运行中","Running"),
                         &[(text(&config.language,"观察信息","Observed activity"), &observed)],
                         text(&config.language,"请等待结果邮件；此通知不代表任务完成。可直接回复补充要求。","Wait for the result email. This update does not confirm completion. Reply with additional instructions if needed."));
-                    db.queue_reply(&session.id, &config.mail.address, &text, "progress")?;
+                    db.queue_reply(&session.id, &config.mail.address, &text, "progress", &config.language)?;
                 }
             }
         }
     }
     let exit = child.wait().await?;
     let errors = stderr_handle.await.unwrap_or_default();
+    if let Some(error) = turn_error { anyhow::bail!("Codex failed: {error}"); }
     if !exit.success() { anyhow::bail!("Codex failed: {}. {}",exit,errors.chars().take(1000).collect::<String>()); }
     if final_text.is_empty() { final_text = text(&config.language,"本轮已结束，但未获取最终回复。请检查本地日志。","This round ended without a final response. Check local logs.").into(); }
     Ok(final_text)

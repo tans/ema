@@ -10,19 +10,19 @@ EMA has **two independent flows**:
 | Prefix | Email-driven CLI execution | Automatic external-session Hook | Notes |
 | --- | --- | --- | --- |
 | codex | Yes | Yes, `notify` | Does not overwrite an existing non-EMA `notify` |
-| cc | Yes, Claude Code | Yes, `Stop` | Non-interactive `plan` mode |
-| gemini | Yes | Yes, `AfterAgent` | Non-interactive sandbox/plan mode |
-| opencode | Error receipt until approved runner exists | Yes, `session.idle` | Plugin loaded on next session |
-| pi | Error receipt until approved runner exists | Yes, `agent_settled` | Global extension |
-| omp | Error receipt until approved runner exists | Yes, `agent_end` | User-level observer |
-| kimi | Error receipt until approved runner exists | Yes, `Stop` / `StopFailure` | Config format/version dependent |
-| zcode | Error receipt until approved runner exists | Yes, `Stop` | Preserves explicitly disabled hook policy |
-| hermes | Error receipt until approved runner exists | Yes, `on_session_end` | User-scoped Hermes plugin, summary is status-only |
-| openclaw | Error receipt until approved runner exists | Yes, `agent_end` | Native plugin, conversation access needed for last reply |
-| alma | No email execution adapter or subject prefix | Yes, `chat.message.didReceive` | Main reply only; live config reload |
-| dsh | Error receipt until approved runner exists | Conditional, `turn/end` | Uses an **already-installed** `dsh-hooks` profile plugin |
+| cc | Yes, Claude Code | Yes, `Stop` | Non-interactive JSON; native Agent permissions |
+| gemini | Yes | Yes, `AfterAgent` | Non-interactive JSON; native Agent permissions |
+| opencode | Yes | Yes, `session.idle` | Plugin loaded on next session |
+| pi | Yes | Yes, `agent_settled` | Global extension |
+| omp | Yes | Yes, `agent_end` | User-level observer |
+| kimi | No execution adapter; error receipt | Yes, `Stop` / `StopFailure` | Config format/version dependent |
+| zcode | No execution adapter; error receipt | Yes, `Stop` | Preserves explicitly disabled hook policy |
+| hermes | No execution adapter; error receipt | Yes, `on_session_end` | User-scoped Hermes plugin, summary is status-only |
+| openclaw | No execution adapter; error receipt | Yes, `agent_end` | Native plugin, conversation access needed for last reply |
+| alma | Yes; no default subject prefix | Yes, `chat.message.didReceive` | Main reply only; live config reload |
+| dsh | No execution adapter; error receipt | Conditional, `turn/end` | Uses an **already-installed** `dsh-hooks` profile plugin |
 
-Only three email execution adapters exist; the other eight prefixes are still recognized and produce a threaded error email. They are **not executed through Codex**. This is intentional: no unverified write-capable headless CLI commands are used for inbound email instructions.
+Email execution adapters exist for Codex, Claude Code, Gemini, OpenCode, Pi, OMP and Alma. Alma continues native threads and can create a new thread when an Alma prefix is configured. Remaining prefixes produce a threaded adapter-unavailable error; they are **not executed through Codex**. Each adapter leaves permissions to native Agent defaults/user configuration or the original session. Headless authorization failures are returned without automatic approval.
 
 All installed hooks are **best effort**. An Agent may require an application/profile restart to load changes, and an upstream install can have different event payloads from the documented version. CI compilation does not replace testing each installed Agent on a real workstation.
 
@@ -109,6 +109,6 @@ Use a controlled, non-sensitive email account:
 
 ### Security and privacy
 
-Do **not** attach the full transcript, secrets, environment variables or file contents to a Hook email. A final reply may still accidentally include sensitive content. Any user running EMA and its automatic HookManager should understand that **local Agent results are sent to their email provider**. This Alpha has no cryptographic sender authentication on inbound email and should use controlled sender addresses and read-only local Agent tasks.
+Do **not** attach the full transcript, secrets, environment variables or file contents to a Hook email. A final reply may still accidentally include sensitive content. Any user running EMA and its automatic HookManager should understand that **local Agent results are sent to their email provider**. This Alpha has no cryptographic sender authentication on inbound email and should use controlled sender addresses and reviewed native Agent permissions. EMA does not override tool availability, sandbox/approval policy, or automatically approve an interactive authorization request.
 
 Official references: [OpenClaw plugin hooks](https://docs.openclaw.ai/plugins/hooks), [Hermes plugin events](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks), [DSH Hooks](https://github.com/PeterBon/dsh-hooks).

@@ -152,19 +152,9 @@ impl Gateway {
             tracing::warn!("mail rejected: unauthorized sender");
             return Ok("unauthorized");
         }
-        let mut body = incoming.body.trim().to_string();
-        // Workspace-write mode requires an additional out-of-band secret per message.
-        // Remove the secret before handing user input to any model or persistence layer.
-        if cfg.workspace_write {
-            let first = body.lines().next().unwrap_or("");
-            let provided = first.strip_prefix("EMA-Code: ").unwrap_or("");
-            let expected = config::secret("access")?;
-            if !constant_time_eq(provided.as_bytes(),expected.as_bytes()) {
-                tracing::warn!("write-mode mail rejected: access code required");
-                return Ok("access_denied");
-            }
-            body = body.lines().skip(1).collect::<Vec<_>>().join("\n");
-        }
+        // Old clients may still include an EMA-Code. It no longer authorizes
+        // execution, but must never reach an Agent or persisted task prompt.
+        let mut body = mail::redact_access_codes(incoming.body.trim());
         let previous = self.database.find_by_references(&incoming.references)?;
         let mut hook=self.database.find_hook_report(&incoming.references)?;
         if hook.is_none() {
@@ -199,7 +189,7 @@ impl Gateway {
         if agent!="alma" {
         let Some(executable)=cli::resolve(&agent,cfg) else {
             self.database.queue_route_error(
-                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+                &incoming.message_id,&incoming.sender,&cfg.mail.address,&agent,&cfg.language,
                 &fmt::route_error(&cfg.language, &agent, previous.as_ref().and_then(|s|s.agent_session.as_deref()).unwrap_or(""), &body,
                     "AGENT_NOT_INSTALLED", text(&cfg.language,"本机未找到 Agent 命令。","The Agent CLI was not found on this machine."),
                     text(&cfg.language,"安装或配置 Agent 后，重新发送任务。","Install or configure the Agent, then resend the task.")),&incoming.references)?;
@@ -207,7 +197,7 @@ impl Gateway {
         };
         if !agent::is_available(&executable.to_string_lossy()).await {
             self.database.queue_route_error(
-                &incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+                &incoming.message_id,&incoming.sender,&cfg.mail.address,&agent,&cfg.language,
                 &fmt::route_error(&cfg.language, &agent, "", &body,
                     "AGENT_UNAVAILABLE", text(&cfg.language,"Agent 命令未通过可用性检查。","The Agent CLI failed its availability check."),
                     text(&cfg.language,"检查本机 Agent 配置后，重新发送任务。","Check the local Agent configuration, then resend the task.")),&incoming.references)?;
@@ -215,7 +205,7 @@ impl Gateway {
         }
         }
         if hook.as_ref().is_some_and(|report|report.native_session.is_empty()) {
-            self.database.queue_route_error(&incoming.message_id,&incoming.sender,&cfg.mail.address,&incoming.subject,
+            self.database.queue_route_error(&incoming.message_id,&incoming.sender,&cfg.mail.address,&agent,&cfg.language,
                 &fmt::route_error(&cfg.language, &agent, "", &body,
                     "SESSION_MISSING", text(&cfg.language,"原报告缺少 Agent 会话 ID，无法续接。","The original report has no Agent session ID and cannot be resumed."),
                     text(&cfg.language,"请在原应用继续，或使用 Agent 前缀发起新任务。","Continue in the original application or send a new task with an Agent prefix.")),&incoming.references)?;
@@ -285,7 +275,7 @@ impl Gateway {
             if success { text(&cfg.language,"完成","Completed") } else { text(&cfg.language,"失败","Failed") },
             &[(text(&cfg.language,"结果 / 原因","Result / reason"), &fmt::excerpt(&report,fmt::RESULT_LIMIT,&cfg.language))],
             text(&cfg.language,"请检查结果；执行结束不代表所有目标均已完成。可直接回复继续此会话。","Review the result; execution ending does not confirm every goal is achieved. Reply to continue this session."));
-        self.database.queue_reply(&job.session_id, &cfg.mail.address, &body, "result")?;
+        self.database.queue_reply(&job.session_id, &cfg.mail.address, &body, "result", &cfg.language)?;
         self.outbox_ready.notify_one();
         Ok(())
     }
@@ -330,13 +320,6 @@ fn reply_text(body: &str) -> String {
             || (s.starts_with('在') && (s.ends_with("写道:") || s.ends_with("写道："))))
     }).collect::<Vec<_>>().join("\n").trim().to_string()
 }
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.is_empty() || a.len() != b.len() { return false; }
-    let mut diff = 0_u8;
-    for (x,y) in a.iter().zip(b) { diff |= x ^ y; }
-    diff == 0
-}
-
 #[cfg(test)]
 mod mail_regression_tests {
     use super::*;
@@ -414,6 +397,105 @@ mod mail_regression_tests {
         assert!(outgoing[0].body.contains("AGENT_NOT_INSTALLED"));
         assert!(!outgoing[0].body.contains("EMPTY_BODY"));
         assert_eq!(gateway.database.stats().unwrap().total_sessions, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn mail_prompt_and_ack_do_not_impose_permissions() {
+        let (gateway, dir) = gateway();
+        let mut cfg = Settings::default();
+        cfg.workspace_write = true;
+        cfg.allowlist = vec!["owner@test".into(), "other@test".into()];
+        cfg.mail.address = "ema@test".into();
+        cfg.agent_routes.push(config::AgentRoute {agent:"alma".into(), prefix:"alma".into(), enabled:true});
+        for language in ["en", "zh-CN"] {
+            cfg.language = language.into();
+            let mid = format!("<{}@test>", uuid::Uuid::new_v4());
+            let mut message = mail::Incoming { uid: 1, message_id: mid.clone(), sender: "owner@test".into(),
+                subject: "alma Update files".into(), body: "Do the work".into(), references: vec![],
+                automated: false, ema_kind: None, ema_message_id: None };
+            assert_eq!(gateway.on_message(&cfg, message.clone()).await.unwrap(), "queued");
+            let decision = router::route(&cfg, &message.subject, &message.body).unwrap();
+            assert!(decision.task.contains("Do the work"));
+            for restricted in ["write permission", "read-only", "no tools", "只读", "不调用工具"] {
+                assert!(!decision.task.contains(restricted), "{}", decision.task);
+                for out in gateway.database.pending_outbox(true).unwrap() { assert!(!out.body.contains(restricted), "{}", out.body); }
+            }
+            assert_eq!(gateway.on_message(&cfg, message.clone()).await.unwrap(), "duplicate");
+            message.message_id = format!("<{}@test>", uuid::Uuid::new_v4());
+            message.references = vec![mid];
+            message.sender = "other@test".into();
+            assert_eq!(gateway.on_message(&cfg, message.clone()).await.unwrap(), "owner_mismatch");
+            message.sender = "stranger@test".into();
+            assert_eq!(gateway.on_message(&cfg, message).await.unwrap(), "unauthorized");
+        }
+        drop(gateway);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_approval_errors_reach_result_mail_as_failures() {
+        use std::os::unix::fs::PermissionsExt;
+        let (gateway, dir) = gateway();
+        let mut cfg = gateway.settings();
+        let fake = dir.join("fake-codex");
+        std::fs::write(&fake, "#!/bin/sh\n/bin/cat > /dev/null\nprintf '%s\\n' '{\"type\":\"turn.failed\",\"error\":{\"message\":\"Native approval required; headless confirmation unavailable\"}}'\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        cfg.codex_command = fake.to_string_lossy().into_owned();
+        gateway.database.store_inbound("<failure@test>", &cfg.mail.address, None, "codex", "_agent_memory",
+            "Task", "Update files", Some(dir.to_str().unwrap()), true, &cfg.mail.address, "Update files", None, "en").unwrap();
+        for ack in gateway.database.pending_outbox(true).unwrap() {
+            gateway.database.outbox_result(&ack.id, None, 1, true, &cfg.mail.address).unwrap();
+        }
+        gateway.work_once(cfg).await.unwrap();
+        let results = gateway.database.pending_outbox(true).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, "result");
+        assert!(results[0].body.contains("Native approval required; headless confirmation unavailable"));
+        assert!(!results[0].body.contains("只读"));
+        assert!(!results[0].body.contains("不调用工具"));
+        assert_eq!(gateway.database.stats().unwrap().failed_jobs, 1);
+        drop(gateway);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn legacy_codes_are_redacted_and_local_replies_need_no_access_secret() {
+        let (gateway, dir) = gateway();
+        let mut cfg = gateway.settings();
+        cfg.workspace_write = true;
+        cfg.enabled = true;
+        cfg.mail.username = cfg.mail.address.clone();
+        cfg.mail.imap_host = "imap.test".into();
+        cfg.mail.smtp_host = "smtp.test".into();
+        cfg.agent_routes.push(config::AgentRoute {agent:"alma".into(), prefix:"alma".into(), enabled:true});
+        gateway.save(cfg.clone()).unwrap();
+        let mut message = incoming("EMA-Code: legacy-secret\nChange the files");
+        message.subject = "alma Change files".into();
+        let mid = message.message_id.clone();
+        assert_eq!(gateway.on_message(&cfg, message).await.unwrap(), "queued");
+        let session = gateway.database.find_by_references(&[mid.clone()]).unwrap().unwrap();
+        gateway.database.set_agent_session(&session.id, "original-thread").unwrap();
+        for out in gateway.database.pending_outbox(true).unwrap() {
+            assert!(!out.body.contains("legacy-secret"));
+            gateway.database.outbox_result(&out.id, None, 1, true, &cfg.mail.address).unwrap();
+        }
+        let first = gateway.database.claim().unwrap().unwrap();
+        assert!(!first.prompt.contains("legacy-secret"));
+        assert!(first.prompt.contains("Change the files"));
+        gateway.database.finish(&first.id, true, "done").unwrap();
+        let request = uuid::Uuid::new_v4().to_string();
+        let record = format!("legacy:{mid}");
+        let instruction = "权限：只读；本轮不调用工具";
+        assert_eq!(gateway.reply_to_mail(&record, &request, instruction).await.unwrap(), "queued");
+        assert_eq!(gateway.reply_to_mail(&record, &request, instruction).await.unwrap(), "duplicate");
+        for out in gateway.database.pending_outbox(true).unwrap() {
+            gateway.database.outbox_result(&out.id, None, 1, true, &cfg.mail.address).unwrap();
+        }
+        let reply = gateway.database.claim().unwrap().unwrap();
+        assert_eq!(reply.session_id, session.id);
+        assert_eq!(reply.prompt, instruction, "preserve permissions explicitly requested by the user");
+        assert_eq!(gateway.database.session(&session.id).unwrap().agent_session.as_deref(), Some("original-thread"));
+        drop(gateway);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

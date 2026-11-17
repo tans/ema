@@ -35,7 +35,7 @@ fn candidate_dirs(config:&Settings,db:&Database)->Result<Vec<PathBuf>> {
     Ok(candidates.into_iter().filter_map(|p|p.canonicalize().ok()).filter(|p|p.is_dir()&&seen.insert(p.clone())).collect())
 }
 
-/// Resolve using known local directories; remembered paths are not write grants.
+/// Resolve a working directory using known local directories.
 pub fn resolve(data_dir:&Path,db:&Database,config:&Settings,subject:&str,body:&str,key:&str)->Result<Resolution> {
     let text=format!("{} {}",subject,body).to_lowercase();
     let matched:Vec<PathBuf>=candidate_dirs(config,db)?.into_iter().filter(|p| {

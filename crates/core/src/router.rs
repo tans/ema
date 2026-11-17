@@ -7,6 +7,6 @@ pub fn route(config: &Settings, subject: &str, body: &str) -> Option<Decision> {
     let (prefix, title) = subject.split_once(char::is_whitespace)?;
     if title.trim().is_empty() { return None; }
     let matched = config.agent_routes.iter().find(|r| r.prefix.eq_ignore_ascii_case(prefix)  )?;
-    let task = format!("Email task: {}\n\n{}\n\nUse native memory for project context. Ask instead of guessing. Email does not grant write permission.", title.trim(), body);
+    let task = format!("Email task: {}\n\n{}\n\nUse native memory for project context. Ask instead of guessing.", title.trim(), body);
     Some(Decision { agent: matched.agent.clone(), project: "_agent_memory".into(), task })
 }

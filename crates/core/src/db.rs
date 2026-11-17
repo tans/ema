@@ -306,21 +306,19 @@ impl Database {
             cwd: cwd.map(str::to_owned), agent_session: native, subject: subject.into(), root_mid: String::new(), last_mid: String::new() };
         let next = if enqueue { text(language, "回执发送后开始处理，请等待结果。可直接回复补充要求。", "Processing starts after this acknowledgment is sent. Wait for the result or reply with additional instructions.") }
             else { text(language, "请直接回复项目名称或项目目录。", "Reply with the project name or working directory.") };
-        let permission = if agent == "alma" { text(language, "只读；本轮不调用工具", "Read-only; no tools in this turn") } else { "" };
         let body = fmt::task_report(language, &session, &job_id, text(language, "已收到本次指令。", "Your instruction has been received."), status,
-            &[(text(language, "本次指令", "Instruction"), &fmt::excerpt(task, fmt::TASK_LIMIT, language)),
-              (text(language, "权限", "Permissions"), permission)], next);
+            &[(text(language, "本次指令", "Instruction"), &fmt::excerpt(task, fmt::TASK_LIMIT, language))], next);
         let domain=mailbox.split('@').nth(1).unwrap_or("localhost");
         let out_mid=format!("<ema-{}@{}>",Uuid::new_v4(),domain);
         let root=existing.map(|s|s.root_mid.as_str())
             .or_else(||hook.map(|report|report.message_id.as_str())).unwrap_or(mid);
         let refs=if root==mid {root.to_string()} else {format!("{root} {mid}")};
-        let reply_subject=existing.map(|s|s.subject.as_str())
-            .or_else(||hook.map(|report|report.subject.as_str())).unwrap_or(subject);
         let ack_kind=if existing.is_some() || hook.is_some() {"resume_ack"} else {"new_task_ack"};
+        let folder = cwd.and_then(|p| Path::new(p).file_name()).and_then(|n| n.to_str()).unwrap_or("");
+        let subject = fmt::tagged_subject(folder, agent, text(language, "回执", "Receipt"));
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
-            params![outbox_id,out_mid,owner,fmt::reply_subject(reply_subject),mid,refs,fmt::envelope(ack_kind,&out_mid,&body),mailbox,ack_kind])?;
+            params![outbox_id,out_mid,owner,subject,mid,refs,fmt::envelope(ack_kind,&out_mid,&body),mailbox,ack_kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![out_mid,session_id])?;
         tx.execute("UPDATE sessions SET last_mid=?1 WHERE id=?2",params![out_mid,session_id])?;
@@ -455,7 +453,7 @@ impl Database {
     /// Record one failure receipt per incoming Message-ID, even across IMAP retries.
     /// No Agent session is created for unknown/missing execution adapters.
     pub fn queue_route_error(&self, mid:&str, recipient:&str, mailbox:&str,
-        subject:&str, error:&str, references:&[String]) -> Result<bool> {
+        agent:&str, language:&str, error:&str, references:&[String]) -> Result<bool> {
         let mut c=self.lock()?;
         let tx=c.transaction()?;
         let added=tx.execute(
@@ -468,11 +466,11 @@ impl Database {
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,source,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,'task',?8,strftime('%s','now'),'error')",
             params![Uuid::new_v4().to_string(),reply_mid,recipient,
-                fmt::reply_subject(subject),mid,refs,fmt::envelope("error",&reply_mid,error),mailbox])?;
+                fmt::tagged_subject("", agent, text(language, "失败", "Failed")),mid,refs,fmt::envelope("error",&reply_mid,error),mailbox])?;
         tx.commit()?;
         Ok(true)
     }
-    pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str, kind: &str) -> Result<()> {
+    pub fn queue_reply(&self, session_id: &str, mailbox: &str, body: &str, kind: &str, language: &str) -> Result<()> {
         anyhow::ensure!(fmt::KINDS.contains(&kind), "invalid outbound mail kind: {kind}");
         let mut c = self.lock()?;
         let tx = c.transaction()?;
@@ -483,9 +481,11 @@ impl Database {
         let mid = format!("<ema-{}@{}>",Uuid::new_v4(), domain);
         let refs = if session.root_mid == session.last_mid { session.root_mid.clone() }
             else { format!("{} {}",session.root_mid,session.last_mid) };
+        let folder = session.cwd.as_deref().and_then(|p| Path::new(p).file_name()).and_then(|n| n.to_str()).unwrap_or("");
+        let status = match kind { "progress" => text(language,"进度","Progress"), "result" => text(language,"结果","Result"), other => other };
         tx.execute("INSERT INTO outbox(id,message_id,recipient,subject,in_reply_to,refs,body,sender,created_at,kind)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'),?9)",
-            params![Uuid::new_v4().to_string(),mid,session.owner,fmt::reply_subject(&session.subject),
+            params![Uuid::new_v4().to_string(),mid,session.owner,fmt::tagged_subject(folder, &session.agent, status),
                 session.last_mid, refs,fmt::envelope(kind,&mid,body),mailbox,kind])?;
         tx.execute("INSERT INTO messages(message_id,session_id,direction,created_at)
             VALUES(?1,?2,'out',strftime('%s','now'))",params![mid,session_id])?;

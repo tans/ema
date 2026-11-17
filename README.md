@@ -4,7 +4,7 @@
 
 EMA is a local Rust/Tauri email gateway for an installed **Codex CLI**. Send a message whose subject begins with an enabled Agent prefix from an allowed mailbox; EMA creates a native agent session and sends a result by email. Reply to the same thread to continue that agent session. The desktop UI has a compact status overview, an optional first-run setup wizard, and settings—not a chat client.
 
-> Experimental Alpha. EMA can run local programs and currently does not independently authenticate email origin or provide comprehensive action approvals. Use a dedicated test mailbox and keep the Agent read-only. Do not connect sensitive workstations or repositories to untrusted email.
+> Experimental Alpha. EMA can run local programs and currently does not independently authenticate email origin or provide comprehensive action approvals. Use a dedicated test mailbox and review the Agent's own permission settings. Do not connect sensitive workstations or repositories to untrusted email.
 
 ## Development
 
@@ -54,13 +54,13 @@ QQ 官方说明：[如何生成授权码](https://help.mail.qq.com/detail/106/98
 
 ## Native Agent memory instead of Project Directories
 
-**Project Directories are no longer a mandatory configuration or UI item.** On creation of a new email thread, EMA checks whether the Codex CLI is installed, then starts an agent-native session from the local user's home directory in **read-only mode**. The instruction asks the installed CLI to use its **own available memory, instructions (such as AGENTS.md) and context** to determine the relevant project. EMA does **not** implement, synchronize, or fabricate a separate memory service.
+**Project Directories are no longer a mandatory configuration or UI item.** On creation of a new email thread, EMA checks whether the Codex CLI is installed, then starts an agent-native session in the resolved working directory with the **Agent's native defaults/user configuration**. The instruction asks the installed CLI to use its **own available memory, instructions (such as AGENTS.md) and context** to determine the relevant project. EMA does **not** implement, synchronize, or fabricate a separate memory service.
 
-If the correct project cannot be determined, the Agent should ask the sender to clarify. A memory reference to a path is **never permission** to write to that path.
+If the correct project cannot be determined, the Agent should ask the sender to clarify. Permissions are decided by the Agent's native policy. EMA does not add a permission mode, tool whitelist, approval bypass, or automatic approval.
 
 On subsequent replies, EMA resumes the original Codex Session ID rather than selecting a new project.
 
-Existing `projects` entries in old `config.json` remain readable for backwards compatibility, including explicit `[codex:alias]` subject routing. However, new sessions do not require any project alias. Legacy workspace-write mode still requires an explicitly authorized project and a per-mail access code; new memory-first sessions cannot use write mode.
+Existing `projects` entries in old `config.json` remain readable for backwards compatibility, including explicit `[codex:alias]` subject routing. However, new sessions do not require any project alias. The legacy `workspace_write` value is preserved when settings are saved but no longer affects validation, execution or prompts. `EMA-Code` is no longer an execution requirement; legacy code lines are still redacted. Existing secrets are preserved.
 
 ## Message example
 
@@ -81,14 +81,14 @@ The installed CLI determines whether sufficient context exists to respond; if no
 - **SQLite**: sessions, jobs, messages, events, pending outbound emails.
 - **Local credential file**: mailbox authorization code is stored in `.ema/secrets.json` in the user directory; on macOS and Linux, newly saved files use owner-only permissions (`0600`).
 
-Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA_ROUTER_API_KEY` (legacy), and `EMA_MAIL_ACCESS_CODE` (legacy write-mode). Never commit them or pass them to Agent subprocesses.
+Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA_ROUTER_API_KEY` (legacy), and `EMA_MAIL_ACCESS_CODE` (legacy, no longer used for authorization). Never commit them or pass them to Agent subprocesses.
 
 ## Known limitations
 
-- Only Codex currently has a runnable adapter. Claude Code/OpenCode detection does not mean they can execute requests yet.
+- Codex, Claude Code, Gemini, OpenCode, Pi, OMP and Alma have execution adapters. Other installed Agents still require a compatible adapter.
 - IMAP polling handles unread messages, not IDLE. Use a dedicated mailbox.
 - Sender addresses are **not proof of authentic email identity**. Authentication and action-level approvals remain open work.
-- Beginning a new session at the user's home directory is a convenience, **not a safe isolation boundary**. Read-only does not necessarily prevent the Agent from reading sensitive data. Use a trusted machine and never enable workspace-write for memory mode.
+- Working directories are not security boundaries. New tasks use native Agent defaults/user configuration; continuations target the original native session without overriding its permission policy. If native authorization cannot be completed headlessly, EMA returns the failure and does not approve it.
 - IMAP connection test only checks login, not SMTP send; real QQ Mail and other providers require an end-to-end mailbox test.
 - Agent native memory depends on what the installed CLI actually supports. No new EMA memory engine is implemented.
 - Official Tauri signed updates require a configured signing key and a published latest.json. Startup checks are silent; download/install require confirmation in Settings → Updates. Platform signing remains ad-hoc/unsigned. See [update deployment and limitations](docs/RELEASING.md).
@@ -97,7 +97,7 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 
 1. Configure an isolated QQ Mail account with an authorization code; verify IMAP test.
 2. Detect local Codex, whitelist your separate sender mailbox, enable and save.
-3. Send a read-only request without a project alias; Codex should use its native context or ask for clarification.
+3. Send a test request without a project alias; Codex should use its native context or ask for clarification.
 4. Receive the result, reply to the same email and verify the original Codex session resumes.
 5. Close the window; verify the tray remains active and preferences persist.
 
@@ -119,25 +119,25 @@ must be allowlisted, including when replying from the EMA mailbox itself.
 Continuation adapters are available for Codex, Claude Code, Gemini, OpenCode, Pi,
 OMP and Alma. They require a valid original session and an available local runner;
 old reports without a usable working directory may ask for clarification. Alma
-continuations require Alma to be running and, under EMA's read-only setting, run
-without tools. Other Agents receive a clear unsupported notice rather than being
+continuations require Alma to be running and use the original thread/model without
+a tool or permission override. Other Agents receive a clear unsupported notice rather than being
 resumed as a different Agent. Actual CLI compatibility varies by installed version.
 
 The EMA status overview now separates **Email → Agent** tasks from **Local Agent → Email** completion reports. Eleven text prefixes are recognized, and unsupported email execution commands receive an informative reply instead of being silently ignored.
 
 Native local Hook reporting currently covers Codex, Claude Code, Gemini, OpenCode, Pi, OMP, Kimi, ZCode, Hermes, OpenClaw and Alma (main replies). DSH reporting is supported when the DSH profile has already installed the third-party `dsh-hooks` plugin. No additional Hook settings screen is required. Hook installation preserves explicit user disables and existing third-party rules.
 
-New sessions started by email subject prefixes currently support Codex, Claude Code and Gemini CLI. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
+New sessions started by email subject prefixes support Codex, Claude Code, Gemini CLI, OpenCode, Pi and OMP; Alma also supports new threads when a prefix is configured. A Hook adapter is **not** proof that the agent supports safe non-interactive email execution. See the [compatibility table and privacy/verification instructions](docs/AGENT_HOOKS.md) for important limitations.
 
 ## Agent routing update (v0.1.7)
 
 All eleven default subject prefixes (`codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`) are always eligible for exact leading-token routing. The UI no longer offers per-Agent enable checkboxes or manual executable scans. Prefix text remains editable. Existing `agent_routes.enabled` fields are retained for backward compatibility but ignored by the router. An allowed sender's message using an unavailable or unsupported runner receives a **threaded, deduplicated error email** rather than being ignored. Ordinary mail still does not trigger an Agent.
 
-Email execution adapters now exist for **Codex**, **Claude Code (`cc`)** and **Gemini CLI (`gemini`)**. They use their installed global commands, with fallback resolution for common macOS GUI PATH locations. Codex retains its sandbox settings; Claude uses noninteractive JSON output in `plan` permission mode, Gemini uses JSON output with both `--sandbox` and `--approval-mode plan`. These two new adapters deliberately allow **read-only operations only**: execution errors, missing credentials, permission failures, and unavailable local sandbox dependencies are emailed back as task failures. Session IDs are retained when CLI JSON includes one. **All other routing prefixes are recognized but return an explicit adapter-unavailable error**; they are not secretly executed by Codex.
+Email execution adapters exist for **Codex**, **Claude Code (`cc`)**, **Gemini CLI (`gemini`)**, **OpenCode**, **Pi**, **OMP** and **Alma**. They use their installed global commands, with fallback resolution for common macOS GUI PATH locations. All adapters omit EMA permission overrides and leave native defaults/user configuration and resumed-session policy in control. Execution errors, missing credentials and permission failures are emailed back as task failures; EMA never substitutes automatic approval for an unavailable interactive confirmation. Session IDs are retained when CLI JSON includes one. **Routing prefixes without an execution adapter return an explicit adapter-unavailable error**; they are not secretly executed by Codex.
 
 Local Agent completion Hooks are now registered for **seven** agents: Codex, Claude Code, Gemini CLI, OpenCode, Pi, **Kimi Code** (`Stop` / `StopFailure` in its TOML config), and **OMP** (`agent_end` user-scope extension). Newly observed agents will sync on the next HookManager pass, without UI switches. The remaining Hook and CLI integrations are still to be verified; do not assume all eleven have native execution support.
 
-**Safety:** sender whitelist alone is not cryptographic authorization. Native Agent CLI `plan` flags and sandbox availability differ by installed version; use trusted test mailboxes and check local permissions before sending real instructions. The default report email is still the EMA mailbox itself. Hook reports are short and may include sensitive text, so evaluate local workflow privacy before deploying.
+**Safety:** sender whitelist alone is not cryptographic authorization. Native Agent policies and headless authorization support differ by installed version; use trusted test mailboxes and check local permissions before sending real instructions. The default report email is still the EMA mailbox itself. Hook reports are short and may include sensitive text, so evaluate local workflow privacy before deploying.
 
 ## Automatic local Agent completion reports (v0.1.6)
 
@@ -176,11 +176,11 @@ macOS binaries are ad-hoc signed, not Apple notarized. Windows binaries lack a p
 
 ## Daily mailbox routing and working directories (v0.1.2)
 
-Use your normal email account. New tasks must come from an approved sender and start with an exact plain-text prefix followed by a space. For example: `codex Review mfggo project`. Available default prefix names are `codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`. These are editable per Agent in the desktop configuration panel. New email-started sessions support Codex, Claude Code and Gemini; other prefixes return an explicit error. Replies to an EMA session resume by In-Reply-To / References, without a prefix.
+Use your normal email account. New tasks must come from an approved sender and start with an exact plain-text prefix followed by a space. For example: `codex Review mfggo project`. Available default prefix names are `codex`, `cc`, `opencode`, `pi`, `omp`, `zcode`, `kimi`, `dsh`, `hermes`, `openclaw`, `gemini`. These are editable per Agent in the desktop configuration panel. New email-started sessions support Codex, Claude Code, Gemini, OpenCode, Pi and OMP (plus Alma with a configured prefix); prefixes without an adapter return an explicit error. Replies to an EMA session resume by In-Reply-To / References, without a prefix.
 
-EMA uses an IMAP UID cursor rather than unseen message flags. On first connection it starts with *future* messages (old inbox messages are not executed); regular messages are not marked read by EMA. If a session's work directory matches a known local project (prior session paths, configured legacy paths, or common developer folders like `~/code` and `~/projects`) it is pinned as `cwd` in SQLite. When a project directory cannot be identified unambiguously EMA sends a clarification email and does not run the Agent. Non-project tasks use isolated directories under EMA's application data `sessions/`. Paths in email or native Agent memory do not grant write permission, and new memory-first sessions remain read-only.
+EMA uses an IMAP UID cursor rather than unseen message flags. On first connection it starts with *future* messages (old inbox messages are not executed); regular messages are not marked read by EMA. If a session's work directory matches a known local project (prior session paths, configured legacy paths, or common developer folders like `~/code` and `~/projects`) it is pinned as `cwd` in SQLite. When a project directory cannot be identified unambiguously EMA sends a clarification email and does not run the Agent. Non-project tasks use isolated directories under EMA's application data `sessions/`. EMA resolves working directories independently of permissions, which remain under the Agent's native policy.
 
-**Security:** the sender allowlist verifies only the parsed From address, **not** the sender's cryptographic identity. This Alpha is unsafe for untrusted email and sensitive local data. Keep workspace-write off until a separate authenticated approval mechanism is available.
+**Security:** the sender allowlist verifies only the parsed From address, **not** the sender's cryptographic identity. This Alpha is unsafe for untrusted email and sensitive local data. Review native Agent permissions before enabling email execution; EMA does not provide an additional action-approval layer.
 
 ## Local mail history
 
