@@ -6,6 +6,8 @@ import "daisyui/components/button.css";
 import "daisyui/components/input.css";
 import "./style.css";
 import MailHistory from "./MailHistory";
+import ToastHost, { notify } from "./Toast";
+import UpdateSettings, { useAppUpdater } from "./UpdateSettings";
 
 type MailSettings = {
   provider: string; address: string; username: string;
@@ -20,7 +22,7 @@ type Settings = {
   poll_seconds: number; progress_minutes: number[];
   enabled: boolean; onboarding_completed: boolean;
 };
-type SettingsTab = "mail" | "allowlist" | "agents";
+type SettingsTab = "mail" | "allowlist" | "agents" | "updates";
 const agentNames = ["codex", "cc", "opencode", "pi", "omp", "zcode", "kimi", "dsh", "hermes", "openclaw", "gemini"];
 const qqMail = (address: string): MailSettings => ({
   provider: "qq", address, username: address, imap_host: "imap.qq.com",
@@ -93,6 +95,21 @@ export default function App() {
   const [view, setView] = useState<"history" | "settings">("history");
   const [search, setSearch] = useState("");
   const [version, setVersion] = useState(0);
+  const [receiving, setReceiving] = useState(false);
+  const setReceiveNotice = (text: string) => notify(text, text.startsWith("收件失败") || text.startsWith("Receive failed") ? "error" : "info");
+  async function receiveMail() {
+    if (receiving) return;
+    setReceiving(true); setReceiveNotice("");
+    try {
+      await invoke("receive_mail_now");
+      setReceiveNotice(language === "zh-CN" ? "收件完成，邮件记录已刷新。" : "Mail checked. History refreshed.");
+    } catch (e) {
+      setReceiveNotice(`${language === "zh-CN" ? "收件失败" : "Receive failed"}: ${e}`);
+    } finally {
+      setVersion(v => v + 1);
+      setReceiving(false);
+    }
+  }
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("mail");
   const [loading, setLoading] = useState(true);
   const [mailboxReady, setMailboxReady] = useState(false);
@@ -104,13 +121,15 @@ export default function App() {
   const [connectionOk, setConnectionOk] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
   const [allowlistText, setAllowlistText] = useState("");
-  const [notice, setNotice] = useState("");
+  const setNotice = (text: string) => notify(text, text.startsWith(labels[settings.language === "en" ? "en" : "zh-CN"].error) ? "error" : "info");
   const [filterOpen, setFilterOpen] = useState(false);
   const [hiddenKinds, setHiddenKinds] = useState<Record<string, boolean>>({ ...DEFAULT_HIDDEN });
   const [loadError, setLoadError] = useState("");
   const anyHidden = Object.values(hiddenKinds).some(Boolean);
   const language = settings.language === "en" ? "en" : "zh-CN";
   const t = labels[language];
+  const updateState = useAppUpdater(language, !loading);
+  const updateLabel = language === "zh-CN" ? "软件更新" : "Updates";
   const busy = saving || testing || sending;
   const dirty = JSON.stringify(settings) !== JSON.stringify(savedSettings) || !!secret.trim();
   const selected = settings.mail.provider === "qq" ? "qq" : "custom";
@@ -126,6 +145,7 @@ export default function App() {
       }).catch(e => {
         console.error("Could not load local settings", e);
         setLoadError("无法读取本地设置，请重新启动 EMA。 / Restart EMA to load local settings.");
+        notify("无法读取本地设置，请重新启动 EMA。 / Restart EMA to load local settings.", "error");
       }).finally(() => setLoading(false));
   }, []);
 
@@ -178,13 +198,14 @@ export default function App() {
 
   if (loading) return <main className="app loading" aria-busy="true">EMA</main>;
   return <main className={`app app-${view}`}>
+    <ToastHost language={language}/>
     <header className="header">
       {view === "settings" ? <button type="button" className="btn btn-ghost back-button" disabled={busy} onClick={back}>
         <ArrowLeft size={18} aria-hidden="true"/>{t.back}
       </button> : <div className="brand"><img src="/ema-logo.svg" alt=""/>EMA</div>}
       {view === "history" && mailboxReady && <label className="header-search"><Search size={14} aria-hidden="true"/>
         <input className="input input-ghost" type="search" aria-label={t.search} placeholder={t.search} value={search} onChange={e => setSearch(e.target.value)}/>
-        <button type="button" className="btn btn-ghost btn-square refresh-button" aria-label={t.refresh} title={t.refresh} onClick={() => setVersion(v => v + 1)}><RefreshCw size={14} aria-hidden="true"/></button>
+        <button type="button" className="btn btn-ghost btn-square refresh-button" aria-label={receiving ? (language === "zh-CN" ? "正在收件…" : "Receiving…") : t.refresh} title={t.refresh} disabled={receiving} aria-busy={receiving} onClick={receiveMail}><RefreshCw size={14} aria-hidden="true"/></button>
       </label>}
       {view === "settings" ? <select className="language" aria-label={t.language} value={language} disabled={busy}
         onChange={e => patch({ language: e.target.value })}><option value="zh-CN">中文</option><option value="en">English</option></select>
@@ -208,8 +229,8 @@ export default function App() {
               </>}
             </div>
           </>}
-          <button type="button" className="btn btn-ghost btn-square settings-button" aria-label={t.settings} title={t.settings} onClick={openSettings}>
-            <SettingsIcon size={19} aria-hidden="true"/>
+          <button type="button" className="btn btn-ghost btn-square settings-button" aria-label={updateState.version ? `${t.settings} · ${updateLabel} ${updateState.version}` : t.settings} title={updateState.version ? `${updateLabel} ${updateState.version}` : t.settings} onClick={openSettings}>
+            <SettingsIcon size={19} aria-hidden="true"/>{updateState.version && <span aria-hidden="true">•</span>}
           </button>
         </div>}
     </header>
@@ -219,10 +240,11 @@ export default function App() {
       : <div className="settings-page">
         <h1>{t.settings}</h1>
         <nav className="settings-nav" aria-label={t.settings}>
-          {([['mail', t.mailbox], ['allowlist', t.senders], ['agents', t.agents]] as const).map(([id, label]) =>
+          {([['mail', t.mailbox], ['allowlist', t.senders], ['agents', t.agents], ['updates', updateLabel + (updateState.version ? ' •' : '')]] as const).map(([id, label]) =>
             <button type="button" key={id} className={`btn btn-ghost settings-nav-item ${settingsTab === id ? 'active' : ''}`}
               aria-current={settingsTab === id ? "page" : undefined} disabled={busy} onClick={() => { setSettingsTab(id); setNotice(""); }}>{label}</button>)}
         </nav>
+        {settingsTab === "updates" && <UpdateSettings language={language} blocked={busy || dirty}/>}
         <fieldset className="settings-fields" disabled={busy}>
           {settingsTab === "mail" && <>
             <div className="choice">
@@ -281,12 +303,12 @@ export default function App() {
             </div><p className="field-hint">{t.prefixHelp}</p></details>
           </>}
         </fieldset>
-        <footer className="settings-footer">
-          {(notice || loadError) && <p className="notice" role="status">{notice || loadError}</p>}
+        {settingsTab !== "updates" && <footer className="settings-footer">
+
           <button type="button" className="btn primary-button" disabled={busy} onClick={() => { void save(); }}>
             {saving ? t.saving : testing ? t.checking : !mailboxReady ? t.loginMail : t.save}
           </button>
-        </footer>
+        </footer>}
       </div>}
   </main>;
 }

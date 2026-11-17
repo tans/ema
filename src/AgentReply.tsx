@@ -1,3 +1,4 @@
+import { notify } from "./Toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { CornerUpLeft, Folder, Send, Terminal } from "react-feather";
@@ -34,7 +35,6 @@ export default function AgentReply({ recordId, language, version, onSubmitted }:
   const busy = useRef(false);
   const activeId = useRef(recordId);
   activeId.current = recordId;
-  const [message, setMessage] = useState<{ recordId: string; error: boolean; text: string } | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const draft = drafts[recordId] ?? { body: "", requestId: "" };
   useEffect(() => { setOpen(false); setContext(null); setLoadError(""); }, [recordId]);
@@ -42,7 +42,7 @@ export default function AgentReply({ recordId, language, version, onSubmitted }:
     let current = true;
     invoke<Context | null>("get_mail_reply_context", { recordId }).then(value => {
       if (current) { setContext(value); setContextId(recordId); setLoadError(""); }
-    }).catch(error => { if (current) setLoadError(String(error)); });
+    }).catch(error => { if (current) { setLoadError(String(error)); notify(`${t.contextFailed}: ${String(error)}`, "error"); } });
     return () => { current = false; };
   }, [recordId, version, reload]);
   useEffect(() => { if (open) textarea.current?.focus(); }, [open, recordId]);
@@ -51,18 +51,18 @@ export default function AgentReply({ recordId, language, version, onSubmitted }:
     const targetId = recordId;
     const requestId = draft.requestId || crypto.randomUUID();
     setDrafts(previous => ({ ...previous, [targetId]: { ...draft, requestId } }));
-    busy.current = true; setBusyId(targetId); setMessage(null);
+    busy.current = true; setBusyId(targetId);
     try {
       await invoke("reply_to_mail", { recordId: targetId, requestId, body: draft.body });
       setDrafts(previous => ({ ...previous, [targetId]: { body: "", requestId: "" } }));
-      setMessage({ recordId: targetId, error: false, text: t.accepted });
+      notify(t.accepted);
       if (activeId.current === targetId) setOpen(false);
       onSubmitted();
     } catch (error) {
-      setMessage({ recordId: targetId, error: true, text: `${t.failed} ${String(error)}` });
+      notify(`${t.failed} ${String(error)}`, "error");
     } finally { busy.current = false; setBusyId(null); }
   };
-  if (loadError) return <div className="reply-load-error" role="status">{t.contextFailed}. <button className="btn btn-ghost btn-xs" onClick={() => setReload(value => value + 1)}>{t.retry}</button></div>;
+  if (loadError) return <div className="reply-load-error"><button className="btn btn-ghost btn-xs" onClick={() => setReload(value => value + 1)}>{t.retry}</button></div>;
   if (!context || contextId !== recordId) return null;
   const blocked = context.blocked ? t.blocked[context.blocked as keyof typeof t.blocked] ?? context.blocked : "";
   const submitting = busyId === recordId;
@@ -75,7 +75,6 @@ export default function AgentReply({ recordId, language, version, onSubmitted }:
       {context.session_id && <div className="reply-ema-session"><dt>{t.ema}</dt><dd>{context.session_id}</dd></div>}
     </dl>
     {blocked && <p className="reply-hint" role="status">{blocked}</p>}
-    {message?.recordId === recordId && <p className={message.error ? "reply-error" : "reply-success"} role={message.error ? "alert" : "status"}>{message.text}</p>}
     {open && <form className="reply-compose" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <label htmlFor="agent-instruction">{t.instruction}</label>
       <textarea ref={textarea} id="agent-instruction" className="textarea textarea-ghost" rows={4} value={draft.body} placeholder={t.placeholder} disabled={submitting}

@@ -91,7 +91,7 @@ Optional environment variables for headless/dev usage: `EMA_MAIL_PASSWORD`, `EMA
 - Beginning a new session at the user's home directory is a convenience, **not a safe isolation boundary**. Read-only does not necessarily prevent the Agent from reading sensitive data. Use a trusted machine and never enable workspace-write for memory mode.
 - IMAP connection test only checks login, not SMTP send; real QQ Mail and other providers require an end-to-end mailbox test.
 - Agent native memory depends on what the installed CLI actually supports. No new EMA memory engine is implemented.
-- This version does not enable Tauri auto-updates or paid platform signing.
+- Official Tauri signed updates require a configured signing key and a published latest.json. Startup checks are silent; download/install require confirmation in Settings → Updates. Platform signing remains ad-hoc/unsigned. See [update deployment and limitations](docs/RELEASING.md).
 
 ## Manual acceptance scenario
 

@@ -39,6 +39,7 @@ impl Gateway {
         Ok(self.reply_target(&record)?.map(|(context,_)|context))
     }
     pub async fn reply_to_mail(&self, record_id:&str, request_id:&str, body:&str) -> Result<String> {
+        let _activity = self.begin_activity()?;
         let id=uuid::Uuid::parse_str(request_id).context("Invalid reply request ID")?;
         let body=body.trim();
         ensure!(!body.is_empty(),"Reply cannot be empty");

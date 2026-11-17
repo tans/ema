@@ -24,12 +24,24 @@ pub struct Gateway {
     pub database: Arc<Database>,
     settings: RwLock<Settings>,
     outbox_ready: tokio::sync::Notify,
+    mail_poll_lock: tokio::sync::Mutex<()>,
+    activity: Arc<tokio::sync::RwLock<()>>,
 }
 impl Gateway {
     pub fn open(dir: PathBuf) -> Result<Arc<Self>> {
         let cfg = Settings::read(&dir)?;
         let db = Arc::new(Database::open(&dir.join("ema.db"))?);
-        Ok(Arc::new(Self { dir, database: db, settings: RwLock::new(cfg), outbox_ready: tokio::sync::Notify::new() }))
+        Ok(Arc::new(Self { dir, database: db, settings: RwLock::new(cfg), outbox_ready: tokio::sync::Notify::new(), mail_poll_lock: tokio::sync::Mutex::new(()), activity: Arc::new(tokio::sync::RwLock::new(())) }))
+    }
+    /// Every operation that can receive, send or execute mail holds a shared guard.
+    pub fn begin_activity(&self) -> Result<tokio::sync::OwnedRwLockReadGuard<()>> {
+        self.activity.clone().try_read_owned().map_err(|_| anyhow::anyhow!("{}", text(&self.settings().language,
+            "正在安装更新，请稍后重试。", "An update is being installed. Try again later.")))
+    }
+    /// Fail immediately when busy; holding this guard closes the check/start race.
+    pub fn prepare_update(&self) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>> {
+        self.activity.clone().try_write_owned().map_err(|_| anyhow::anyhow!("{}", text(&self.settings().language,
+            "邮件或 Agent 任务正在运行，请完成后重试安装。", "Mail or Agent work is running. Retry installation when it finishes.")))
     }
     pub fn settings(&self) -> Settings {
         self.settings.read().expect("settings lock").clone()
@@ -52,14 +64,16 @@ impl Gateway {
     async fn hook_loop(self: Arc<Self>) {
         let mut ticks=0_u64;
         loop {
-            if ticks % 12 == 0 {
-                if let Err(err)=hooks::install(&self.dir) {
-                    tracing::warn!("hook sync failed: {err:#}");
+            if let Ok(_activity) = self.begin_activity() {
+                if ticks % 12 == 0 {
+                    if let Err(err)=hooks::install(&self.dir) {
+                        tracing::warn!("hook sync failed: {err:#}");
+                    }
                 }
-            }
-            let settings=self.settings();
-            if let Err(err)=hooks::tick(&self.dir,&settings,&self.database) {
-                tracing::warn!("hook collector failed: {err:#}");
+                let settings=self.settings();
+                if let Err(err)=hooks::tick(&self.dir,&settings,&self.database) {
+                    tracing::warn!("hook collector failed: {err:#}");
+                }
             }
             ticks=ticks.wrapping_add(1);
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -76,7 +90,18 @@ impl Gateway {
             tokio::time::sleep(Duration::from_secs(cfg.poll_seconds.max(15))).await;
         }
     }
+    /// Manual receipt uses exactly the same pipeline as the scheduled poll.
+    pub async fn receive_mail_now(&self) -> Result<()> {
+        let cfg = self.settings();
+        anyhow::ensure!(cfg.enabled, "{}", text(&cfg.language,
+            "收件已暂停，请先在设置中启用接收邮件任务。",
+            "Mail receiving is paused. Enable Receive email tasks in Settings first."));
+        self.poll_once(cfg).await
+    }
     async fn poll_once(&self, config: Settings) -> Result<()> {
+        let _activity = self.begin_activity()?;
+        // Hold across cursor read, fetch, classification and watermark update.
+        let _guard = self.mail_poll_lock.lock().await;
         let password = config::secret("mail")?;
         let mail_config = config.mail.clone();
         let pass = password.clone();
@@ -107,6 +132,8 @@ impl Gateway {
         }
         // Advance only after the fetched message and its processing result are stored.
         if !failed { self.database.set_cursor(&config.mail.address, watermark.max(fetched_watermark), current_validity)?; }
+        anyhow::ensure!(!failed, "{}", text(&config.language,
+            "部分邮件处理失败，将在下次收件时重试。", "Some mail could not be processed and will be retried on the next check."));
         Ok(())
     }
     async fn on_message(&self, cfg: &Settings, incoming: mail::Incoming) -> Result<&'static str> {
@@ -241,6 +268,7 @@ impl Gateway {
         }
     }
     async fn work_once(&self, cfg: Settings) -> Result<()> {
+        let _activity = self.begin_activity()?;
         let Some(job) = self.database.claim()? else { return Ok(()); };
         let session = self.database.session(&job.session_id)?;
         let result = agent::execute(self.database.clone(), cfg.clone(), job.clone(), session.clone()).await;
@@ -276,6 +304,7 @@ impl Gateway {
         }
     }
     async fn flush_outbox(&self, cfg: Settings) -> Result<()> {
+        let _activity = self.begin_activity()?;
         let pending = self.database.pending_outbox(cfg.enabled)?;
         if pending.is_empty() { return Ok(()); }
         let pass = config::secret("mail")?;
@@ -326,6 +355,34 @@ mod mail_regression_tests {
         mail::Incoming { uid: 1, message_id: "<user-task@example.com>".into(),
             sender: "owner@example.com".into(), subject: "codex Check mail".into(),
             body: body.into(), references: vec![], automated: false, ema_kind: None, ema_message_id: None }
+    }
+    #[tokio::test]
+    async fn updater_excludes_active_work_and_blocks_new_work_until_released() {
+        let (gateway, dir) = gateway();
+        let activity = gateway.begin_activity().unwrap();
+        assert!(gateway.prepare_update().is_err(), "must not interrupt active mail work");
+        drop(activity);
+        let installation = gateway.prepare_update().unwrap();
+        assert!(gateway.begin_activity().is_err());
+        assert!(gateway.prepare_update().is_err());
+        let cfg = gateway.settings();
+        assert!(gateway.poll_once(cfg.clone()).await.is_err());
+        assert!(gateway.work_once(cfg.clone()).await.is_err());
+        assert!(gateway.flush_outbox(cfg).await.is_err());
+        assert_eq!(gateway.reply_to_mail("missing", "invalid", "test").await.unwrap_err().to_string(),
+            gateway.begin_activity().unwrap_err().to_string());
+        drop(installation);
+        assert!(gateway.begin_activity().is_ok(), "failed/cancelled install must allow work again");
+        drop(gateway);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn manual_receive_does_not_bypass_pause() {
+        let (gateway, dir) = gateway();
+        let error = gateway.receive_mail_now().await.unwrap_err();
+        assert!(error.to_string().contains("paused") || error.to_string().contains("暂停"));
+        assert!(gateway.database.pending_outbox(true).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn allowlisted_self_mail_reaches_codex_routing() {

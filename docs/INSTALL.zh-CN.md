@@ -4,7 +4,7 @@
 
 ## 下载与验证
 
-1. 普通用户可从 [EMA Releases](https://github.com/tans/ema/releases) 下载**公开的 Alpha Pre-release**。全部平台打包和校验成功后，GitHub Actions 自动公开预览版；若构建失败，则保留 Draft（不可公开下载）。开发者在版本 Tag 发布前，可到 [GitHub Actions](https://github.com/tans/ema/actions/workflows/build.yml) 的成功 CI 运行记录下载有效期 7 天的 `ema-macos-adhoc-dmg` 测试附件。
+1. 普通用户可从 [EMA Releases](https://github.com/tans/ema/releases) 下载**公开的 Alpha 预览版**（启用自动更新后的新发布会标记为 Latest，而不是 GitHub Pre-release）。全部平台打包和校验成功后，GitHub Actions 自动公开预览版；若构建失败，则保留 Draft（不可公开下载）。开发者在版本 Tag 发布前，可到 [GitHub Actions](https://github.com/tans/ema/actions/workflows/build.yml) 的成功 CI 运行记录下载有效期 7 天的 `ema-macos-adhoc-dmg` 测试附件。
 2. 选择对应系统安装包：
    - **macOS Apple Silicon**：ARM64 / aarch64 的 DMG
    - **macOS Intel**：x86_64 的 DMG
@@ -67,4 +67,8 @@ chmod +x EMA_*.AppImage
 
 ## 自动更新
 
-**尚未启用。** 目前更新方式是从 Releases 手动下载下一版本。Tauri Updater 的免费签名密钥可在完成端到端安全验收后配置，现阶段不会自动获取或执行更新。
+已接入 Tauri v2 官方 Updater。首次需要手动安装包含此功能的版本；发布者配置签名 secrets 并发布带有 `latest.json` 的 Latest 版本后，才能实际获取更新。
+
+启动后后台检查；没有更新或自动检查失败时不弹提示。发现新版本会在右下角 Toast 提醒，并保留“设置 → 软件更新”入口。也可以手动检查，点击下载后显示进度并验证签名，再确认安装和重启。失败可重试；运行中的邮件收发或 Agent 任务会阻止安装，请等待完成后重试。
+
+补丁版本仅更新 Apple Silicon。Intel Mac、Windows 和 Linux 等待下一次 X.Y.0 全平台发布；Linux 自动更新仅适用于可写位置的 AppImage，DEB 请手动升级。更新签名不替代 Apple 公证或 Windows Authenticode 签名。发布设置和平台限制见 [发布文档](RELEASING.md)。

@@ -36,6 +36,13 @@ jobs:
       # A stale run can get HTTP 403 when GitHub refuses a release target whose
       # .github/workflows tree no longer matches the current default branch.
       # Re-run on the latest main commit instead of rewriting an old release tag.
+      - name: Require updater signing credentials
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "::error::Configure TAURI_SIGNING_PRIVATE_KEY before releasing signed updates."; exit 1; }
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" || { echo "::error::Configure TAURI_SIGNING_PRIVATE_KEY_PASSWORD for the encrypted updater key."; exit 1; }
       - name: Confirm release source is latest main
         run: |
           set -euo pipefail
@@ -146,7 +153,7 @@ jobs:
 
           - macOS: ad-hoc signed, **NOT** Apple Developer ID signed or notarized.
           - Windows: unsigned. Linux: unsigned.
-          - Automatic updates are not enabled.
+          - Updates are signed with the EMA updater key.
 
           See [Chinese installation guide](https://github.com/tans/ema/blob/main/docs/INSTALL.zh-CN.md)
           and [release documentation](https://github.com/tans/ema/blob/main/docs/RELEASING.md).
@@ -173,6 +180,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -185,7 +195,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config libssl-dev
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
       - name: Verify square Linux AppImage icon
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -202,30 +212,12 @@ jobs:
               return raw.startswith(bytes.fromhex("89504e470d0a1a0a")) and struct.unpack(">II", raw[16:24])[0] == struct.unpack(">II", raw[16:24])[1]
           assert any(square(p) for p in pngs), "Linux AppImage needs a square PNG bundle icon"
           PY
-      - name: Build and upload installers to draft release
-        uses: tauri-apps/tauri-action@v1
+      - name: Build signed installers and updater artifacts
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ needs.validate.outputs.tag }}
-          releaseName: "EMA ${{ needs.validate.outputs.tag }} (Alpha)"
-          releaseBody: |
-            # EMA ${{ needs.validate.outputs.tag }} — Public Alpha preview
-            Platform policy: ${{ needs.validate.outputs.scope }} release. Patch versions (X.Y.Z, Z > 0) publish only Apple Silicon DMG; minor versions (X.Y.0) publish macOS ARM64/Intel, Windows and Linux.
-            Local-first email gateway for Codex (Rust + Tauri 2). This Alpha refreshes EMA's neon blue-and-green brand mark, native app icons, and compact desktop configuration UI.
-            **Experimental, not production-safe**: only use a controlled test
-            mailbox and non-sensitive, read-only local context.
-            Sender authentication, action approvals, live QQ mail/Agent validation,
-            and auto-updates are not yet complete.
-
-            macOS: ad-hoc signed, NOT Apple notarized (first-run approval may be required).
-            Windows: unsigned, SmartScreen may warn. Linux: unsigned.
-            [中文安装说明](https://github.com/tans/ema/blob/main/docs/INSTALL.zh-CN.md)
-            [发布与已知限制](https://github.com/tans/ema/blob/main/docs/RELEASING.md)
-            Download SHA256SUMS to check asset integrity.
-          releaseDraft: true
-          prerelease: true
-          args: ${{ matrix.args }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build ${{ matrix.args }}
       - name: Verify macOS app ad-hoc signature inside DMG
         if: startsWith(matrix.platform, 'macos-')
         shell: bash
@@ -243,6 +235,27 @@ jobs:
           codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee /tmp/ema-codesign.log
           grep -q 'Signature=adhoc' /tmp/ema-codesign.log
 
+      - name: Collect and upload exact platform assets to draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          ROOT=target
+          PLATFORM="$BUILD_TARGET"
+          if [[ -n "$BUILD_TARGET" ]]; then
+            ROOT="target/$BUILD_TARGET"
+          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            PLATFORM=linux
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            PLATFORM=windows
+          fi
+          python3 scripts/release_updater.py collect --root "$ROOT" --folder release-assets --version "${RELEASE_TAG#v}" --platform "$PLATFORM"
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+
   checksums:
     name: Attach checksum manifest
     needs: [validate, bundle]
@@ -250,7 +263,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Verify all installers and publish SHA256SUMS
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install signature verifier
+        run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Verify all updater signatures and publish manifests
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -260,26 +279,11 @@ jobs:
           set -euo pipefail
           mkdir -p bundles
           gh release download "$RELEASE_TAG" --dir bundles
-          VERSION="${RELEASE_TAG#v}"
-          files=("EMA_${VERSION}_aarch64.dmg")
-          if [[ "$RELEASE_SCOPE" == "full" ]]; then
-            files+=("EMA_${VERSION}_x64.dmg" "EMA_${VERSION}_amd64.deb" "EMA_${VERSION}_amd64.AppImage" "EMA_${VERSION}_x64-setup.exe" "EMA_${VERSION}_x64_en-US.msi")
-          fi
-          # No stale platform files are allowed: a patch must publish only one ARM64 DMG.
-          actual="$(find bundles -maxdepth 1 -type f ! -name SHA256SUMS | wc -l | tr -d ' ')"
-          test "$actual" -eq "${#files[@]}" || { echo "::error::Expected ${#files[@]} installers, got $actual"; exit 1; }
-          for file in "${files[@]}"; do
-            test -s "bundles/$file" || { echo "::error::Missing or empty $file"; exit 1; }
-          done
-          (
-            cd bundles
-            printf '%s\0' "${files[@]}" | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
-            test -s SHA256SUMS
-          )
-          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --clobber
+          python3 scripts/release_updater.py manifest --folder bundles --version "${RELEASE_TAG#v}" --scope "$RELEASE_SCOPE" --repository "$GH_REPO"
+          gh release upload "$RELEASE_TAG" bundles/latest.json bundles/SHA256SUMS --clobber
 
   publish:
-    name: Publish public Alpha pre-release
+    name: Publish Alpha as latest updater release
     needs: [validate, checksums]
     runs-on: ubuntu-latest
     permissions:
@@ -299,5 +303,6 @@ jobs:
             exit 1
           }
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx latest.json
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
           gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets             --jq '{url, isDraft, isPrerelease, files: [.assets[].name]}'

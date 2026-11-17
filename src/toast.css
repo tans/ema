@@ -1,0 +1,8 @@
+.ema-toasts { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 10000; display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
+.ema-toast { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid #dce2e8; border-radius: 10px; background: #fff; color: #24272c; box-shadow: 0 4px 20px #0002; font-size: 12px; line-height: 1.6; pointer-events: auto; animation: ema-toast-in .15s ease-out; }
+.ema-toast span { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 40vh; overflow: auto; }
+.ema-toast-error { border-color: #e9bcbc; color: #a62c2c; }
+.ema-toast button { padding: 2px; display: flex; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.ema-toast button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+@keyframes ema-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .ema-toast { animation: none; } }

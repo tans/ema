@@ -1,3 +1,4 @@
+import { notify } from "./Toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "react-feather";
@@ -100,7 +101,7 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
           setSelected(previous => items.slice(0, 50).some(item => item.id === previous) ? previous : null);
           setError("");
         })
-        .catch(err => { if (current) setError(String(err)); })
+        .catch(err => { if (current) { setError(String(err)); notify(`${t.failed} ${String(err)}`, "error"); } })
         .finally(() => { if (current) setLoading(false); });
     }, 200);
     return () => { current = false; window.clearTimeout(timer); };
@@ -127,7 +128,6 @@ export default function MailHistory({ language, search, version, hiddenKinds = {
   const note = (key: string) => t.notes[key as keyof typeof t.notes] ?? "";
 
   return <section className="history-page" aria-label={t.title}>
-    {error && <p className="history-error" role="alert">{t.failed} {error}</p>}
     {loading && rows.length === 0 && <p className="history-message" role="status">{t.loading}</p>}
     {!loading && !error && filteredRows.length === 0 && <div className="history-message"><strong>{rows.length > 0 ? t.filteredEmpty : (search ? t.noMatches : t.empty)}</strong>
       {rows.length > 0 ? <p>{t.filterHint}</p> : (!search && <p>{t.emptyHelp}</p>)}</div>}

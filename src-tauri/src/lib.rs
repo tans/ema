@@ -1,4 +1,21 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct UpdateGate(Mutex<Option<tokio::sync::OwnedRwLockWriteGuard<()>>>);
+
+#[tauri::command]
+fn prepare_app_update(state: tauri::State<'_, Arc<Gateway>>, gate: tauri::State<'_, UpdateGate>) -> Result<(), String> {
+    let mut held = gate.0.lock().map_err(|e| e.to_string())?;
+    if held.is_some() { return Err("Update installation already in progress / 更新安装已在进行".into()); }
+    *held = Some(state.prepare_update().map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+#[tauri::command]
+fn release_app_update(gate: tauri::State<'_, UpdateGate>) -> Result<(), String> {
+    gate.0.lock().map_err(|e| e.to_string())?.take();
+    Ok(())
+}
 use tauri::{Manager, WindowEvent};
 use ema_core::{config::{Settings,save_secret,secret}, mail, Gateway};
 use serde::Serialize;
@@ -37,6 +54,10 @@ fn get_mail_history(state: tauri::State<'_, Arc<Gateway>>, search: String, offse
     state.database.mail_history(&search, offset).map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn receive_mail_now(state: tauri::State<'_, Arc<Gateway>>) -> Result<(), String> {
+    state.inner().clone().receive_mail_now().await.map_err(|e| format!("{e:#}"))
+}
+#[tauri::command]
 fn get_mail_reply_context(state: tauri::State<'_, Arc<Gateway>>, record_id: String) -> Result<Option<ema_core::ReplyContext>, String> {
     state.mail_reply_context(&record_id).map_err(|e|e.to_string())
 }
@@ -70,7 +91,8 @@ fn detect_agents(state: tauri::State<'_, Arc<Gateway>>) -> Vec<DetectedAgent> {
 }
 
 #[tauri::command]
-async fn check_mail(settings: Settings, password: Option<String>) -> Result<(), String> {
+async fn check_mail(state: tauri::State<'_, Arc<Gateway>>, settings: Settings, password: Option<String>) -> Result<(), String> {
+    let _activity = state.begin_activity().map_err(|e| e.to_string())?;
     // Testing a mailbox must not require enabling the Gateway or an allowlist.
     let mut check = settings;
     check.enabled = false;
@@ -91,6 +113,7 @@ async fn check_mail(settings: Settings, password: Option<String>) -> Result<(), 
 /// SMTP test uses saved mailbox settings, not caller-provided destination policy.
 #[tauri::command]
 async fn send_test_mail(state: tauri::State<'_, Arc<Gateway>>, recipient: String) -> Result<(), String> {
+    let _activity = state.begin_activity().map_err(|e| e.to_string())?;
     let cfg = state.settings();
     let address = recipient.trim().to_ascii_lowercase();
     if address.is_empty() || address.contains('\r') || address.contains('\n')
@@ -127,6 +150,9 @@ fn agent_status(state: tauri::State<'_, Arc<Gateway>>) -> AgentStatus {
 pub fn run() {
     tracing_subscriber::fmt::init();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .manage(UpdateGate::default())
         .setup(|app| {
             let dir=app.path().app_data_dir()?;
             let gateway=Gateway::open(dir)?;
@@ -156,8 +182,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            prepare_app_update,release_app_update,
             get_settings,save_settings,set_secret,has_mail_secret,get_secret,get_stats,agent_status,detect_agents,check_mail,send_test_mail,
-            get_mail_history,get_mail_reply_context,reply_to_mail
+            get_mail_history,receive_mail_now,get_mail_reply_context,reply_to_mail
         ])
         .on_window_event(|window,event| {
             if let WindowEvent::CloseRequested{api,..}=event {

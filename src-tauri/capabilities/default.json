@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Only the EMA configuration window can call core Tauri commands.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:allow-check", "updater:allow-download", "updater:allow-install", "process:allow-restart"]
 }
