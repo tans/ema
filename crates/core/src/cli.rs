@@ -97,21 +97,46 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
         return Ok(crate::email_format::excerpt(&answer, crate::email_format::RESULT_LIMIT, &cfg.language));
     }
     if matches!(session.agent.as_str(),"pi"|"omp") {
-        let id=session.agent_session.as_deref().context("the original session ID is missing")?;
-        let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
-        if !session_path.is_file() {bail!("the original session file is unavailable");}
+        // Fresh tasks have no agent-side session yet: let the CLI create one in
+        // an isolated per-EMA-session directory so it can be found and resumed
+        // after the run. Existing sessions are resumed by their file path.
+        let fresh_dir = if session.agent_session.is_none() {
+            let dir = std::env::temp_dir().join("ema-agent-sessions").join(&session.id);
+            std::fs::create_dir_all(&dir)?;
+            Some(dir)
+        } else { None };
         if session.agent=="pi" {
-            cmd.args(["-p","--session"]).arg(session_path)
-                .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+            if let Some(id)=session.agent_session.as_deref() {
+                let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
+                if !session_path.is_file() {bail!("the original session file is unavailable");}
+                cmd.args(["-p","--session"]).arg(session_path)
+                    .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+            } else {
+                cmd.arg("-p").arg("--session-dir").arg(fresh_dir.as_ref().unwrap())
+                    .args(["--no-extensions","--no-mcp","--no-approve","--tools","read,grep,find,ls","--"]);
+            }
         } else {
-            cmd.arg("-p").arg("--resume").arg(session_path)
-                .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+            if let Some(id)=session.agent_session.as_deref() {
+                let session_path=Path::new(id).canonicalize().context("the original session file is unavailable")?;
+                if !session_path.is_file() {bail!("the original session file is unavailable");}
+                cmd.arg("-p").arg("--resume").arg(session_path)
+                    .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+            } else {
+                cmd.arg("-p").arg("--session-dir").arg(fresh_dir.as_ref().unwrap())
+                    .args(["--no-extensions","--no-lsp","--tools=read,grep,find,ls","--approval-mode=always-ask","--"]);
+            }
         }
         cmd.arg(&job.prompt).current_dir(&path)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         for key in ["EMA_MAIL_PASSWORD","EMA_ROUTER_API_KEY","EMA_MAIL_ACCESS_CODE"]{cmd.env_remove(key);}
         let output=tokio::time::timeout(Duration::from_secs(900),cmd.output()).await
             .context("Agent exceeded 15-minute execution timeout")??;
+        // Persist the freshly created session file so a later reply can resume it.
+        if let Some(dir)=fresh_dir {
+            if let Some(latest)=latest_session_file(&dir) {
+                db.set_agent_session(&session.id, &latest)?;
+            }
+        }
         if !output.status.success() {bail!("{} failed: {}",session.agent,String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>());}
         let answer=crate::email_format::excerpt(&String::from_utf8_lossy(&output.stdout), crate::email_format::RESULT_LIMIT, &cfg.language);
         if answer.trim().is_empty() {bail!("Agent completed without a final response");}
@@ -162,4 +187,17 @@ pub async fn execute(db:Arc<Database>,cfg:&Settings,job:&Job,session:&Session)->
     }
     if answer.trim().is_empty() {bail!("Agent completed without a final response");}
     Ok(answer)
+}
+
+/// Newest `.jsonl` session file inside `dir` (created most recently), if any.
+fn latest_session_file(dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries.filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| (e.path(), e.metadata().and_then(|m| m.modified()).ok()))
+        .filter_map(|(p, m)| {
+            if p.extension().map(|x| x == "jsonl").unwrap_or(false) { Some((p, m)) } else { None }
+        })
+        .max_by_key(|(_, m)| m.clone().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+        .map(|(p, _)| p.to_string_lossy().into_owned())
 }
